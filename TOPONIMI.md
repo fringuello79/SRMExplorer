@@ -31,3 +31,7 @@ Aquila e camoscio non trattati (deciso il 24/09).
 
 Da validare con Ale (segnati anche sopra): confini km di Rosciolo, nome della cresta
 18,5–20,4, nome del vallone della discesa 21,3–24,3, eventuale "Cimata Fossa dei Cavalli".
+
+Aggiunte del 25/09: zona 5,8-6,6 'La discesa del brecciato' (indicazione di Ale);
+bosco in Val di Teve a sinistra della salita al Rozza (indicazione di Ale);
+ristoro + rastrelliera bastoncini al parcheggio di Valle Porclaneta.
