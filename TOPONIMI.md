@@ -35,3 +35,20 @@ Da validare con Ale (segnati anche sopra): confini km di Rosciolo, nome della cr
 Aggiunte del 25/09: zona 5,8-6,6 'La discesa del brecciato' (indicazione di Ale);
 bosco in Val di Teve a sinistra della salita al Rozza (indicazione di Ale);
 ristoro + rastrelliera bastoncini al parcheggio di Valle Porclaneta.
+
+Vette (25/09, fonte OpenStreetMap, snap sul massimo locale della griglia altimetrica):
+- Monte Velino (2486 m)
+- Monte Cafornia (2424 m)
+- Cima Avezzano (2378 m)
+- Monte di Sevice (2355 m)
+- Monte Costognillo (2339 m)
+- Cimata Fossa dei Cavalli (2301 m)
+- Punta Trento (2243 m)
+- Le Tre Sorelle (2241 m)
+- Punta Trieste (2230 m)
+- Murolungo (2184 m)
+- Monte il Bicchero (2161 m)
+- Iaccio dei Montoni (2083 m)
+- Monte Rozza (2064 m)
+- La Difensola (1326 m)
+- Punta Canale (1250 m)

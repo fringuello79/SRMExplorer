@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v13';
+const VER = 'v16';
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 
@@ -58,6 +58,8 @@ async function boot(){
   const lg = await loadGLB(loader, 'assets/lino.glb?' + VER, p => prog(0.66 + 0.28 * p));
   prepLino(lg);
   buildPins();
+  try { await document.fonts.load('400 72px Anton'); } catch (e) {}
+  buildPeaks();
   buildProfile(); buildMinimap(); bindUI();
   const h = location.hash.match(/km=([\d.]+)/);
   if (h) st.s = clamp(parseFloat(h[1]) * 1000, 0, TOT);
@@ -68,7 +70,15 @@ async function boot(){
   window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
                   poi: i => openPoi(route.pois[i]), gara: showGara, segui: v => setFollow(v, false),
                   anim: () => action ? { t: +action.time.toFixed(3), ts: +mixer.timeScale.toFixed(2),
-                                         dur: +action.getClip().duration.toFixed(2) } : null };
+                                         dur: +action.getClip().duration.toFixed(2) } : null,
+                  tracks: () => action ? action.getClip().tracks.map(t => t.name) : [],
+                  poseT: tt => {
+                    if (!action) return null;
+                    action.time = tt; mixer.timeScale = 1; mixer.update(0);
+                    scene.updateMatrixWorld(true);
+                    const b = scene.getObjectByName('B_an_L');
+                    return b ? b.matrixWorld.elements.slice(12, 15).map(v => +v.toFixed(2)) : null;
+                  } };
   setView('follow');
   clock = new THREE.Clock();
   renderer.setAnimationLoop(tick);
@@ -146,10 +156,16 @@ function prepLino(lg){
   scene.add(lino);
   if (lg.animations && lg.animations.length) {
     mixer = new THREE.AnimationMixer(lg.scene);
-    const clip = lg.animations.reduce((a, b) => (b.duration > a.duration ? b : a), lg.animations[0]);
-    action = mixer.clipAction(clip);
-    action.setLoop(THREE.LoopRepeat, Infinity);
-    action.play();
+    window._linoclips = lg.animations.map(c => [c.name, +c.duration.toFixed(2), c.tracks.length]);
+    let best = null;
+    for (const c of lg.animations) {
+      const a = mixer.clipAction(c);
+      a.setLoop(THREE.LoopRepeat, Infinity);
+      a.play();
+      if (!best || c.tracks.length > best.getClip().tracks.length) best = a;
+    }
+    action = best;
+    console.log('clip Lino:', JSON.stringify(window._linoclips));
   } else {
     console.warn('lino.glb senza animazioni: resta statico');
   }
@@ -519,6 +535,56 @@ function colorizeTrail(mesh){
   mesh.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
 }
 
+
+// ---------- bandierine fantasma delle vette ----------
+let peakItems = [], peakT = 0;
+function peakLabel(nome, quota){
+  const c = document.createElement('canvas'); c.width = 1024; c.height = 192;
+  const x = c.getContext('2d');
+  const testo = nome.toUpperCase() + (quota ? '  \u00b7  ' + quota + ' m' : '');
+  x.font = '400 72px Anton, Oswald, sans-serif';
+  const w = Math.min(990, x.measureText(testo).width + 84);
+  const x0 = (1024 - w) / 2;
+  x.fillStyle = 'rgba(12,31,20,0.84)';
+  x.beginPath();
+  if (x.roundRect) x.roundRect(x0, 32, w, 128, 48); else x.rect(x0, 32, w, 128);
+  x.fill();
+  x.strokeStyle = 'rgba(243,239,226,0.9)'; x.lineWidth = 5; x.stroke();
+  x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillStyle = '#f3efe2';
+  x.fillText(testo, 512, 100);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
+}
+function buildPeaks(){
+  if (!route.peaks || !route.peaks.length) return;
+  const grp = new THREE.Group();
+  const astaGeo = new THREE.CylinderGeometry(0.45, 0.75, 54, 6);
+  const astaMat = new THREE.MeshBasicMaterial({ color: 0xf3efe2, transparent: true, opacity: 0.5 });
+  const sh = new THREE.Shape();
+  sh.moveTo(0, 0); sh.lineTo(17, -4.5); sh.lineTo(0, -9); sh.lineTo(0, 0);
+  const flagGeo = new THREE.ShapeGeometry(sh);
+  for (const p of route.peaks) {
+    const g = new THREE.Group();
+    g.position.set(p.x, p.z, -p.y);
+    const asta = new THREE.Mesh(astaGeo, astaMat);
+    asta.position.y = 27;
+    const flag = new THREE.Mesh(flagGeo,
+      new THREE.MeshBasicMaterial({ color: 0xf4951f, transparent: true, opacity: 0.62, side: THREE.DoubleSide }));
+    flag.position.y = 52.5;
+    const lbl = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: peakLabel(p.n, p.e), transparent: true, depthTest: false }));
+    lbl.position.y = 70;
+    lbl.scale.set(110, 20.6, 1);
+    g.add(asta, flag, lbl);
+    g.userData = { lbl, flag };
+    grp.add(g); peakItems.push(g);
+  }
+  scene.add(grp);
+  console.log('vette:', route.peaks.map(p => p.n).join(' | '));
+}
+
 // ---------- vegetazione e sassi istanziati ----------
 async function loadVeg(loader){
   const r = await fetch('assets/veg.json?' + VER);
@@ -607,6 +673,20 @@ function tick(){
     const ph = g.ph0 + g.rate * tNow;
     m.position.set(g.c[0] + g.r * Math.cos(ph), g.c[2] + Math.sin(tNow * 0.6 + g.ph0) * 4, -(g.c[1] + g.r * Math.sin(ph)));
     m.rotation.y = ph + Math.PI / 2 + Math.PI;
+  }
+  peakT += dt;
+  if (peakItems.length && peakT > 0.15) {
+    peakT = 0;
+    for (const g of peakItems) {
+      const d = camera.position.distanceTo(g.position);
+      g.visible = d < 6500;
+      if (!g.visible) continue;
+      const o = d < 900 ? 1 : Math.max(0, 1 - (d - 900) / 2600);
+      g.userData.lbl.material.opacity = o;
+      const s2 = clamp(d * 0.075, 26, 125);
+      g.userData.lbl.scale.set(s2, s2 * 0.1875, 1);
+      g.userData.flag.rotation.y = Math.sin(performance.now() / 1400 + g.position.x) * 0.7;
+    }
   }
   updateHUD();
   renderer.render(scene, camera);
