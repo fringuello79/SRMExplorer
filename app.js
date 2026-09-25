@@ -48,7 +48,7 @@ function loaderShow(){
         el.style.backgroundPosition = (-(frame % m.cols) * W) + 'px ' + (-Math.floor(frame / m.cols) * H) + 'px';
       }, 80);
       const tags = [
-        ['FACCIA DA SINDACO', 'a chi vi ricorda?', 0.50, 0.13, 1],
+        ['FACCIA DA SINDACO', 'chi vi ricorda?', 0.50, 0.13, 1],
         ['FISICO ATLETICO', '(o quasi)', 0.44, 0.40, -1],
         ['SCARPE TECNICHE DA MONTAGNA', 'collaudate sul brecciato', 0.52, 0.90, 1],
         ['BASTONCINI OMOLOGATI', 'riconsegna a Porclaneta, mi raccomando', 0.64, 0.56, 1],
