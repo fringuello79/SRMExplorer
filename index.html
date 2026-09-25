@@ -28,17 +28,17 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
 .slot{padding:7px 14px 8px;border-left:1px solid rgba(243,239,226,.22);display:flex;
   flex-direction:column;justify-content:center;min-width:0}
 .slot:first-child{border-left:none;flex:1 1 auto}
-.lab{font-size:10px;letter-spacing:.22em;color:var(--grigio);text-transform:uppercase;white-space:nowrap}
+.lab{font-size:11px;letter-spacing:.2em;color:var(--grigio);text-transform:uppercase;white-space:nowrap}
 #zona-n{font-family:Anton,sans-serif;font-size:19px;line-height:1.15;color:var(--avorio);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #zona-s{font-size:12px;color:var(--ambra);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.val{font-family:"JetBrains Mono",monospace;font-size:22px;font-weight:600;line-height:1.2}
+.val{font-family:"JetBrains Mono",monospace;font-size:24px;font-weight:600;line-height:1.2}
 .unit{font-size:11px;color:var(--grigio)}
 #slot-sent{align-items:center;flex-direction:row;gap:9px}
-#chip{width:38px;height:38px;border-radius:50%;background:var(--avorio);display:flex;
+#chip{width:42px;height:42px;border-radius:50%;background:var(--avorio);display:flex;
   align-items:center;justify-content:center;font-family:Anton,sans-serif;
-  font-size:17px;color:var(--rosso);flex:0 0 auto}
-#sent-lab{font-size:10px;letter-spacing:.18em;color:var(--grigio);text-transform:uppercase;
+  font-size:19px;color:var(--rosso);flex:0 0 auto}
+#sent-lab{font-size:11px;letter-spacing:.16em;color:var(--grigio);text-transform:uppercase;
   max-width:74px;line-height:1.3}
 
 /* ---------- banner POI ---------- */
@@ -105,9 +105,13 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   background:var(--arancio);color:#1d1206;font-family:Oswald,sans-serif;font-size:15px;
   font-weight:600;letter-spacing:.08em;cursor:pointer}
 #card ul{margin:8px 0 0 18px;font-size:14px;line-height:1.7}
+@media (max-width:900px){
+  #slot-gate{display:none}
+}
 @media (max-width:640px){
   #zona-n{font-size:15px}
-  .val{font-size:17px}
+  .val{font-size:18px}
+  #slot-dp{display:none}
   .slot{padding:6px 9px 7px}
   #sent-lab{display:none}
   #minimap{width:100px;height:100px}
@@ -131,6 +135,18 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   <div class="slot">
     <div class="lab">Quota</div>
     <div class="val" id="v-q">729<span class="unit"> m</span></div>
+  </div>
+  <div class="slot" id="slot-pend">
+    <div class="lab">Pendenza</div>
+    <div class="val" id="v-p">0<span class="unit"> %</span></div>
+  </div>
+  <div class="slot" id="slot-dp">
+    <div class="lab">D+ fatto</div>
+    <div class="val" id="v-dp">0<span class="unit"> m</span></div>
+  </div>
+  <div class="slot" id="slot-gate">
+    <div class="lab" id="g-lab">Cancello</div>
+    <div class="val" id="v-g">&mdash;</div>
   </div>
   <div class="slot" id="slot-sent">
     <div id="chip">E1</div>
@@ -179,6 +195,6 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
 }}
 </script>
-<script type="module" src="app.js?v=23"></script>
+<script type="module" src="app.js?v=24"></script>
 </body>
 </html>
