@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v21';
+const VER = 'v23';
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 
@@ -83,6 +83,15 @@ async function boot(){
     g.scene.traverse(o => { if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.metalness = 0; });
     scene.add(g.scene);
   }, undefined, () => console.warn('extras assente'));
+  loader.load('assets/borghi.glb?' + VER, g => {
+    g.scene.traverse(o => {
+      if (o.isMesh) {
+        o.castShadow = true; o.receiveShadow = true;
+        if (o.material && o.material.isMeshStandardMaterial) { o.material.metalness = 0; o.material.roughness = 0.95; }
+      }
+    });
+    scene.add(g.scene);
+  }, undefined, () => console.warn('borghi assente'));
   $('load-step').textContent = 'Lino…';
   const lg = await loadGLB(loader, 'assets/lino.glb?' + VER, p => prog(0.66 + 0.28 * p));
   prepLino(lg);
