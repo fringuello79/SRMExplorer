@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v24';
+const VER = 'v25';
 let cumDP = null;
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
@@ -195,6 +195,7 @@ function prepWorld(g){
       o.material.metalness = 0; o.material.roughness = 0.9;
     }
     if (nm.startsWith('Grif_Meshy')) grifTpl = o;
+    if (nm === 'Sevice_Meshy') window._hutS = o;
   });
   // grifoni in orbita: cloni del modello, parametri dall'export
   if (grifTpl && route.grif) {
@@ -205,7 +206,21 @@ function prepWorld(g){
       scene.add(m); grifs.push(m);
     }
   }
+  // Capanna di Sevice: al tornante del km 14,69, base incassata nel suolo
+  const hutS = window._hutS;
+  if (hutS) {
+    hutS.position.set(-1213.5, 1560, -2740.6);
+    hutS.rotation.y = HUT_YAW;
+    hutS.geometry.computeBoundingBox();
+    let gm = 1e9;
+    for (const off of [[0, 0], [11, 0], [-11, 0], [0, 11], [0, -11]]) {
+      const gg = groundAt(-1213.5 + off[0], -2740.6 + off[1]);
+      if (gg > -1e3) gm = Math.min(gm, gg);
+    }
+    if (gm < 1e8) hutS.position.y = (gm - 0.8) - hutS.geometry.boundingBox.min.y * hutS.scale.x;
+  }
 }
+let HUT_YAW = 5.3416;  // porta+panca verso il nastro
 
 function prepLino(lg){
   lino = new THREE.Group();
@@ -516,6 +531,43 @@ function showGara(){
 
 
 // ---------- colori del terreno: quota reale + pendenza ----------
+let DETTEX = null;
+function detailTex(){
+  if (DETTEX) return DETTEX;
+  const S = 256, n2 = S * S;
+  let seed = 20260607;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const mk = passes => {
+    let cur = new Float32Array(n2);
+    for (let i = 0; i < n2; i++) cur[i] = rnd();
+    for (let k = 0; k < passes; k++) {
+      const nx = new Float32Array(n2);
+      for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+        nx[y * S + x] = (cur[y * S + x] + cur[y * S + (x + 1) % S] + cur[y * S + (x + S - 1) % S] +
+                         cur[((y + 1) % S) * S + x] + cur[((y + S - 1) % S) * S + x]) / 5;
+      }
+      cur = nx;
+    }
+    let mn = 1, mx = 0;
+    for (let i = 0; i < n2; i++) { if (cur[i] < mn) mn = cur[i]; if (cur[i] > mx) mx = cur[i]; }
+    const sc = mx > mn ? 1 / (mx - mn) : 1;
+    for (let i = 0; i < n2; i++) cur[i] = (cur[i] - mn) * sc;
+    return cur;
+  };
+  const A = mk(2), B = mk(5);
+  const data = new Uint8Array(n2 * 4);
+  for (let i = 0; i < n2; i++) {
+    data[i * 4] = A[i] * 255; data[i * 4 + 1] = B[i] * 255; data[i * 4 + 2] = 128; data[i * 4 + 3] = 255;
+  }
+  DETTEX = new THREE.DataTexture(data, S, S);
+  DETTEX.wrapS = DETTEX.wrapT = THREE.RepeatWrapping;
+  DETTEX.magFilter = THREE.LinearFilter;
+  DETTEX.minFilter = THREE.LinearMipmapLinearFilter;
+  DETTEX.generateMipmaps = true;
+  DETTEX.anisotropy = 4;
+  DETTEX.needsUpdate = true;
+  return DETTEX;
+}
 function colorizeTerrain(mesh){
   const g = mesh.geometry;
   const pos = g.getAttribute('position');
@@ -553,7 +605,22 @@ function colorizeTerrain(mesh){
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 8;
     tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
-    mesh.material = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 1, metalness: 0 });
+    const matT = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 1, metalness: 0 });
+    matT.onBeforeCompile = sh => {
+      sh.uniforms.uDet = { value: detailTex() };
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec2 vDetXZ;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDetXZ = (modelMatrix * vec4(position, 1.0)).xz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uDet;\nvarying vec2 vDetXZ;')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  float d1 = texture2D(uDet, vDetXZ / 19.0).r;
+  float d2 = texture2D(uDet, vDetXZ / 141.0).g;
+  diffuseColor.rgb *= mix(0.84, 1.16, d1) * mix(0.92, 1.08, d2);
+}`);
+    };
+    mesh.material = matT;
   } else {
     mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
   }
@@ -710,10 +777,29 @@ async function loadVeg(loader){
   pg.scene.traverse(o => { if (o.isMesh) lib[o.name] = o; });
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), P = new THREE.Vector3(),
         S = new THREE.Vector3(), E = new THREE.Euler();
+  // spettatori: mai sopra ~1700 m reali (y scena 1088), mai a meno di 6 m dal nastro
+  const rxs = [], rys = [];
+  for (let i = 0; i < N; i += 4) { rxs.push(route.x[i]); rys.push(route.y[i]); }
+  const dNastro = (x, y) => {
+    let dm = 1e9;
+    for (let i = 0; i < rxs.length; i++) {
+      const d = (rxs[i] - x) * (rxs[i] - x) + (rys[i] - y) * (rys[i] - y);
+      if (d < dm) dm = d;
+    }
+    return Math.sqrt(dm);
+  };
   for (const key of Object.keys(veg.inst)) {
-    const arr = veg.inst[key];
+    let arr = veg.inst[key];
     const proto = lib[veg.protos[key]];
     if (!proto || !arr.length) continue;
+    const isGent = key === 'Sphere_155' || key.startsWith('Cone_03') ||
+                   /^M_EX_gen/.test((proto.material && proto.material.name) || '');
+    if (isGent) {
+      const pre = arr.length;
+      arr = arr.filter(t => t[2] < 1088 && dNastro(t[0], t[1]) > 6);
+      if (pre !== arr.length) console.log('spettatori rimossi (' + key + '):', pre - arr.length);
+      if (!arr.length) continue;
+    }
     if (proto.material && proto.material.isMeshStandardMaterial) {
       proto.material = proto.material.clone();
       proto.material.metalness = 0; proto.material.roughness = 0.95;
