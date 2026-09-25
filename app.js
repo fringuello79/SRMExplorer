@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v18';
+const VER = 'v20';
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 
@@ -50,6 +50,35 @@ async function boot(){
   prepWorld(world.scene);
   scene.add(world.scene);
   loadVeg(loader).catch(e => console.warn('vegetazione:', e));
+  try {
+    const lupoSrc = world.scene.getObjectByName('Lupo_Pratoni');
+    if (lupoSrc) {
+      const l2 = lupoSrc.clone();
+      posAt(21650, tmpA); tanAt(21650, tmpB);
+      const distNastro = (x, z) => {
+        let dm = 1e9;
+        for (let i = 0; i < N; i += 2) {
+          const d = Math.hypot(route.x[i] - x, -route.y[i] - z);
+          if (d < dm) dm = d;
+        }
+        return dm;
+      };
+      let lx = 0, lz = 0, scelto = 0;
+      for (const off of [22, -22, 34, -34]) {
+        const cx = tmpA.x + tmpB.z * off, cz = tmpA.z - tmpB.x * off;
+        if (distNastro(cx, cz) > 13) { lx = cx; lz = cz; scelto = off; break; }
+      }
+      if (!scelto) { lx = tmpA.x + tmpB.z * 40; lz = tmpA.z - tmpB.x * 40; }
+      const ly = groundAt(lx, lz);
+      l2.position.set(lx, ly > -1e3 ? ly + 0.05 : tmpA.y, lz);
+      posAt(26300, tmpC);
+      const hOld = Math.atan2(-(tmpC.z - lupoSrc.position.z), tmpC.x - lupoSrc.position.x);
+      posAt(21650, tmpA);
+      const hNew = Math.atan2(-(tmpA.z - lz), tmpA.x - lx);
+      l2.rotation.y += (hNew - hOld);
+      scene.add(l2);
+    }
+  } catch (e) { console.warn('lupo discesa:', e); }
   loader.load('assets/extras.glb?' + VER, g => {
     g.scene.traverse(o => { if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.metalness = 0; });
     scene.add(g.scene);
@@ -145,6 +174,8 @@ function prepWorld(g){
     } else if (nm.startsWith('SRM_Trail')) {
       colorizeTrail(o);
       o.renderOrder = 1;
+    } else if (nm === 'Forest' || nm.startsWith('Forest')) {
+      o.visible = false;
     } else if (nm.startsWith('Clouds')) {
       o.material = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
     } else if (o.material && o.material.isMeshStandardMaterial) {
@@ -478,14 +509,26 @@ function colorizeTerrain(mesh){
     const up = nrm ? Math.abs(nrm.getY(i)) : 1;
     const st2 = clamp((0.86 - up) / 0.55, 0, 1) * 0.45;
     r = r * (1 - st2) + 0.52 * st2; g2 = g2 * (1 - st2) + 0.49 * st2; b = b * (1 - st2) + 0.44 * st2;
-    if (ORTHO && orthoColor(pos.getX(i), -pos.getZ(i), OC)) {
-      const w = 0.74;
-      r = OC[0] * w + r * (1 - w); g2 = OC[1] * w + g2 * (1 - w); b = OC[2] * w + b * (1 - w);
-    }
+    if (ORTHO) { const wl = 0.75; r = r * (1 - wl) + wl; g2 = g2 * (1 - wl) + wl; b = b * (1 - wl) + wl; }
     col[i * 3] = r; col[i * 3 + 1] = g2; col[i * 3 + 2] = b;
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+  if (ORTHO && ORTHO.img) {
+    const uv = new Float32Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      uv[i * 2] = (pos.getX(i) - ORTHO.x0) / (ORTHO.x1 - ORTHO.x0);
+      uv[i * 2 + 1] = (-pos.getZ(i) - ORTHO.y0) / (ORTHO.y1 - ORTHO.y0);
+    }
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    const tex = new THREE.Texture(ORTHO.img);
+    tex.needsUpdate = true;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+    mesh.material = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 1, metalness: 0 });
+  } else {
+    mesh.material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
+  }
 }
 
 
@@ -508,7 +551,7 @@ async function loadOrtho(){
     const c = document.createElement('canvas'); c.width = c.height = j.n;
     const x = c.getContext('2d', { willReadFrequently: true });
     x.drawImage(img, 0, 0, j.n, j.n);
-    ORTHO = Object.assign({}, j, { px: x.getImageData(0, 0, j.n, j.n).data });
+    ORTHO = Object.assign({}, j, { px: x.getImageData(0, 0, j.n, j.n).data, img: img });
     console.log('ortofoto pronta');
   } catch (e) { console.warn('ortho assente:', e.message); }
 }
@@ -578,12 +621,15 @@ function colorizeTrail(mesh){
 // ---------- bandierine fantasma delle vette ----------
 let peakItems = [], peakT = 0;
 function peakLabel(nome, quota){
-  const c = document.createElement('canvas'); c.width = 1024; c.height = 192;
-  const x = c.getContext('2d');
+  const mis = document.createElement('canvas').getContext('2d');
+  mis.font = '400 86px Anton, Oswald, sans-serif';
   const testo = nome.toUpperCase() + (quota ? '  \u00b7  ' + quota + ' m' : '');
+  const cw = Math.min(1900, Math.max(420, Math.ceil(mis.measureText(testo).width) + 120));
+  const c = document.createElement('canvas'); c.width = cw; c.height = 192;
+  const x = c.getContext('2d');
   x.font = '400 86px Anton, Oswald, sans-serif';
-  const w = Math.min(990, x.measureText(testo).width + 84);
-  const x0 = (1024 - w) / 2;
+  const w = cw - 24;
+  const x0 = 12;
   x.fillStyle = 'rgba(12,31,20,0.84)';
   x.beginPath();
   if (x.roundRect) x.roundRect(x0, 32, w, 128, 48); else x.rect(x0, 32, w, 128);
@@ -591,10 +637,10 @@ function peakLabel(nome, quota){
   x.strokeStyle = 'rgba(243,239,226,0.9)'; x.lineWidth = 5; x.stroke();
   x.textAlign = 'center'; x.textBaseline = 'middle';
   x.fillStyle = '#f3efe2';
-  x.fillText(testo, 512, 100);
+  x.fillText(testo, cw / 2, 100);
   const tex = new THREE.CanvasTexture(c);
   tex.anisotropy = 4;
-  return tex;
+  return { tex, aspect: cw / 192 };
 }
 function buildPeaks(){
   if (!route.peaks || !route.peaks.length) return;
@@ -612,10 +658,12 @@ function buildPeaks(){
     const flag = new THREE.Mesh(flagGeo,
       new THREE.MeshBasicMaterial({ color: 0xf4951f, transparent: true, opacity: 0.62, side: THREE.DoubleSide }));
     flag.position.y = 52.5;
+    const pl = peakLabel(p.n, p.e);
     const lbl = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: peakLabel(p.n, p.e), transparent: true, depthTest: false }));
+      map: pl.tex, transparent: true, depthTest: false }));
     lbl.position.y = 70;
-    lbl.scale.set(110, 20.6, 1);
+    lbl.userData.aspect = pl.aspect;
+    lbl.scale.set(20.6 * pl.aspect, 20.6, 1);
     g.add(asta, flag, lbl);
     g.userData = { lbl, flag };
     grp.add(g); peakItems.push(g);
@@ -639,8 +687,10 @@ async function loadVeg(loader){
     const proto = lib[veg.protos[key]];
     if (!proto || !arr.length) continue;
     if (proto.material && proto.material.isMeshStandardMaterial) {
+      proto.material = proto.material.clone();
       proto.material.metalness = 0; proto.material.roughness = 0.95;
-      if (proto.material.color.getHexString() === '2743c7') proto.material.color.setHex(0x225220);
+      if (key === 'Sphere_155') proto.material.color.setHex(0xdfa075);
+      else if (key.startsWith('Cone_03')) proto.material.color.setHex(0x2d55b8);
     }
     const im = new THREE.InstancedMesh(proto.geometry, proto.material, arr.length);
     for (let i = 0; i < arr.length; i++) {
@@ -730,7 +780,8 @@ function tick(){
       const o = d < 1400 ? 1 : Math.max(0, 1 - (d - 1400) / 3000);
       g.userData.lbl.material.opacity = o;
       const s2 = clamp(d * 0.11, 44, 190);
-      g.userData.lbl.scale.set(s2, s2 * 0.1875, 1);
+      const hh = s2 * 0.1875;
+      g.userData.lbl.scale.set(hh * (g.userData.lbl.userData.aspect || 5.33), hh, 1);
       g.userData.flag.rotation.y = Math.sin(performance.now() / 1400 + g.position.x) * 0.7;
     }
   }
