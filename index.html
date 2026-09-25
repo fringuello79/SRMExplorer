@@ -105,6 +105,15 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   background:var(--arancio);color:#1d1206;font-family:Oswald,sans-serif;font-size:15px;
   font-weight:600;letter-spacing:.08em;cursor:pointer}
 #card ul{margin:8px 0 0 18px;font-size:14px;line-height:1.7}
+#spinbox{position:relative;width:470px;height:330px;margin:10px auto 0;max-width:94vw}
+#spin-img{position:absolute;left:50%;top:0;transform:translateX(-50%);width:240px;height:320px;
+  background-repeat:no-repeat;display:none;filter:drop-shadow(0 10px 16px rgba(0,0,0,.45))}
+#spin-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+#spin-chip{position:absolute;max-width:170px;padding:6px 9px;border:1px solid rgba(243,239,226,.45);
+  border-radius:7px;background:rgba(12,31,20,.88);font-family:"JetBrains Mono",monospace;
+  font-size:10px;line-height:1.5;letter-spacing:.03em;color:var(--avorio);text-transform:uppercase;
+  text-align:left;opacity:0;transition:opacity .45s}
+#spin-chip b{color:var(--arancio)}
 @media (max-width:900px){
   #slot-gate{display:none}
 }
@@ -177,6 +186,11 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
 <div class="cover" id="loader">
   <div id="load-t">SRM <span>EXPLORER</span></div>
   <div id="load-sub">Skyrace del Maglio 2026 · percorso in 3D</div>
+  <div id="spinbox">
+    <div id="spin-img"></div>
+    <svg id="spin-svg"></svg>
+    <div id="spin-chip"></div>
+  </div>
   <div id="load-barw"><div id="load-bar"></div></div>
   <div id="load-step">avvio…</div>
 </div>
@@ -195,6 +209,6 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
 }}
 </script>
-<script type="module" src="app.js?v=27"></script>
+<script type="module" src="app.js?v=28"></script>
 </body>
 </html>

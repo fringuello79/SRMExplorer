@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v27';
+const VER = 'v28';
 let cumDP = null;
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
@@ -30,11 +30,73 @@ function fail(msg){ $('loader').style.display = 'none'; $('err').style.display =
 window.addEventListener('error', e => { if (!st.ready) fail('Errore: ' + (e.message || e.type)); });
 const prog = f => { $('load-bar').style.width = Math.round(f * 100) + '%'; };
 
+window._loaderShow = loaderShow;
+function loaderShow(){
+  const box = $('spinbox'); if (!box) return;
+  const img = new Image();
+  let timer = null, chipT = null;
+  fetch('assets/lino_giro.json?' + VER).then(r => r.ok ? r.json() : null).then(m => {
+    if (!m) return;
+    img.onload = () => {
+      const el = $('spin-img'), W = 240, H = 320;
+      el.style.display = 'block';
+      el.style.backgroundImage = 'url(' + img.src + ')';
+      el.style.backgroundSize = (m.cols * W) + 'px ' + (Math.ceil(m.n / m.cols) * H) + 'px';
+      let frame = 0;
+      timer = setInterval(() => {
+        frame = (frame + 1) % m.n;
+        el.style.backgroundPosition = (-(frame % m.cols) * W) + 'px ' + (-Math.floor(frame / m.cols) * H) + 'px';
+      }, 80);
+      const tags = [
+        ['FACCIA DA SINDACO', 'a chi vi ricorda?', 0.50, 0.13, 1],
+        ['FISICO ATLETICO', '(o quasi)', 0.44, 0.40, -1],
+        ['SCARPE TECNICHE DA MONTAGNA', 'collaudate sul brecciato', 0.52, 0.90, 1],
+        ['BASTONCINI OMOLOGATI', 'riconsegna a Porclaneta, mi raccomando', 0.64, 0.56, 1],
+        ['GAMBE DA 2.109 M D+', 'garanzia 29,7 km', 0.44, 0.73, -1],
+        ['SGUARDO FISSO SUL VELINO', 'o sul primo ristoro?', 0.54, 0.16, -1],
+        ['ZAINO LEGGERO', "dentro c'\u00e8 tutta l'acqua del Regolamento", 0.40, 0.35, 1],
+      ];
+      let ti = Math.floor(Math.random() * tags.length);
+      const chip = $('spin-chip'), svg = $('spin-svg');
+      const show = () => {
+        const t = tags[ti]; ti = (ti + 1) % tags.length;
+        const bw = box.clientWidth, bh = box.clientHeight;
+        const ix = bw / 2 - W / 2;
+        const ax = ix + t[2] * W, ay = t[3] * H;
+        chip.innerHTML = '<b>' + t[0] + '</b><br>' + t[1];
+        chip.style.opacity = 0;
+        chip.style.left = ''; chip.style.right = '';
+        if (t[4] > 0) chip.style.right = '0px'; else chip.style.left = '0px';
+        chip.style.top = Math.max(0, Math.min(bh - 64, ay - 26)) + 'px';
+        requestAnimationFrame(() => {
+          chip.style.opacity = 1;
+          const cr = chip.getBoundingClientRect(), br = box.getBoundingClientRect();
+          if (br.width < 4) return;
+          const cx2 = t[4] > 0 ? (cr.left - br.left - 3) : (cr.right - br.left + 3);
+          const cy2 = cr.top - br.top + cr.height / 2;
+          svg.setAttribute('viewBox', '0 0 ' + bw + ' ' + bh);
+          svg.innerHTML = '<line x1="' + cx2 + '" y1="' + cy2 + '" x2="' + ax + '" y2="' + ay +
+            '" stroke="#f4951f" stroke-width="2.2" opacity="0.92"/>' +
+            '<circle cx="' + ax + '" cy="' + ay + '" r="3.4" fill="#f4951f"/>';
+        });
+      };
+      show();
+      chipT = setInterval(show, 2600);
+    };
+    img.src = 'assets/lino_giro.webp?' + VER;
+  }).catch(() => {});
+  window._loaderStop = () => {
+    if (timer) clearInterval(timer);
+    if (chipT) clearInterval(chipT);
+  };
+}
+
 boot().catch(e => { console.error(e); fail(e.message || String(e)); });
 
 async function boot(){
   if (!window.WebGLRenderingContext) { fail('WebGL non disponibile su questo dispositivo.'); return; }
   $('load-step').textContent = 'dati del percorso…';
+  loaderShow();
   const rr = await fetch('assets/route.json?' + VER);
   if (!rr.ok) throw new Error('route.json non trovato (' + rr.status + ')');
   route = await rr.json();
@@ -109,6 +171,7 @@ async function boot(){
   if (h) st.s = clamp(parseFloat(h[1]) * 1000, 0, TOT);
   st.ready = true; prog(1);
   $('loader').style.display = 'none';
+  if (window._loaderStop) window._loaderStop();
   try { if (!localStorage.getItem('srmx_help')) { showHelp(); localStorage.setItem('srmx_help', '1'); } }
   catch (e) { /* storage bloccato: pazienza */ }
   window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
