@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v25';
+const VER = 'v27';
 let cumDP = null;
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
@@ -41,7 +41,9 @@ async function boot(){
   N = route.n; TOT = route.total_km * 1000;
   cumDP = new Float32Array(N);
   { let acc = 0;
-    for (let i = 1; i < N; i++) { const dz = (route.z[i] - route.z[i - 1]) * route.elev_a; if (dz > 0) acc += dz; cumDP[i] = acc; } }
+    for (let i = 1; i < N; i++) {
+      const dz = route.elev ? (route.elev[i] - route.elev[i - 1]) : (route.z[i] - route.z[i - 1]) * route.elev_a;
+      if (dz > 0) acc += dz; cumDP[i] = acc; } }
   prog(0.06);
   $('load-step').textContent = 'ortofoto e altimetria\u2026';
   await Promise.all([loadOrtho(), loadHeights()]);
@@ -255,6 +257,7 @@ function posAt(s, out){
 function quotaAt(s){
   const f = clamp(s, 0, TOT) / TOT * (N - 1);
   const i = Math.min(Math.floor(f), N - 2), t = f - i;
+  if (route.elev) return lerp(route.elev[i], route.elev[i + 1], t);   // profilo GPX reale
   return route.elev_a * lerp(route.z[i], route.z[i + 1], t) + route.elev_b;
 }
 function tanAt(s, out){
@@ -312,9 +315,11 @@ function updateHUD(){
   const km = st.s / 1000;
   $('v-km').textContent = km.toFixed(1).replace('.', ',');
   $('v-q').innerHTML = Math.round(quotaAt(st.s)) + '<span class="unit"> m</span>';
-  const sA = Math.max(st.s - 60, 0), sB = Math.min(st.s + 60, TOT);
-  const pend = (quotaAt(sB) - quotaAt(sA)) / Math.max(sB - sA, 1) * 100;
-  $('v-p').innerHTML = (pend > 0 ? '+' : '') + Math.round(pend) + '<span class="unit"> %</span>';
+  const sA = Math.max(st.s - 80, 0), sB = Math.min(st.s + 80, TOT);
+  const pRaw = (quotaAt(sB) - quotaAt(sA)) / Math.max(sB - sA, 1) * 100;
+  st.pend = (st.pend === undefined) ? pRaw : st.pend + (pRaw - st.pend) * 0.35;
+  const pShow = Math.round(st.pend);
+  $('v-p').innerHTML = (pShow > 0 ? '+' : '') + pShow + '<span class="unit"> %</span>';
   if (cumDP) {
     const gi = Math.min(N - 1, Math.round(st.s / TOT * (N - 1)));
     $('v-dp').innerHTML = Math.round(cumDP[gi]).toLocaleString('it-IT') + '<span class="unit"> m</span>';
