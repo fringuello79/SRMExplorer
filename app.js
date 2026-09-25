@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v16';
+const VER = 'v18';
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
 
@@ -96,11 +96,11 @@ function buildStage(){
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(Math.max(320, innerWidth || 1280), Math.max(240, innerHeight || 720));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.12;
+  renderer.toneMappingExposure = 1.22;
   scene = new THREE.Scene();
-  const cielo = new THREE.Color(0xd9e4ee);
+  const cielo = new THREE.Color(0xcfe2f4);
   scene.background = cielo;
-  scene.fog = new THREE.Fog(cielo, 2600, 17000);
+  scene.fog = new THREE.Fog(cielo, 2800, 18000);
   camera = new THREE.PerspectiveCamera(55, Math.max(320, innerWidth || 1280) / Math.max(240, innerHeight || 720), 1, 30000);
   camera.position.set(route.x[6], route.z[6] + 60, -route.y[6] + 120);
   controls = new OrbitControls(camera, renderer.domElement);
@@ -109,12 +109,23 @@ function buildStage(){
   controls.minDistance = 14; controls.maxDistance = 4200;
   controls.addEventListener('start', () => setFollow(false, true));
   // luce d'alba, come nel film
-  const hemi = new THREE.HemisphereLight(0xffe9cf, 0x2c3a28, 0.95);
-  const sun = new THREE.DirectionalLight(0xffc487, 2.0);
-  sun.position.set(-0.55, 0.42, -0.72).multiplyScalar(8000);
-  const fill = new THREE.DirectionalLight(0xffcf9e, 0.5);
-  fill.position.set(0.7, 0.5, 0.6).multiplyScalar(8000);
-  scene.add(hemi, sun, fill);
+  const hemi = new THREE.HemisphereLight(0xf2f7ff, 0x6d755b, 1.05);
+  sunLight = new THREE.DirectionalLight(0xfff3e0, 2.4);
+  sunLight.position.set(-1200, 1450, -1350);
+  const fill = new THREE.DirectionalLight(0xffe7c8, 0.32);
+  fill.position.set(5600, 4000, 4800);
+  scene.add(hemi, sunLight, sunLight.target, fill);
+  SHADOWS = !/Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
+  if (SHADOWS) {
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    sunLight.castShadow = true;
+    sunLight.shadow.mapSize.set(2048, 2048);
+    const sk = sunLight.shadow.camera;
+    sk.left = -430; sk.right = 430; sk.top = 430; sk.bottom = -430;
+    sk.near = 150; sk.far = 4500;
+    sunLight.shadow.bias = -0.00055;
+  }
   addEventListener('resize', () => {
     const W = Math.max(320, innerWidth || 1280), H = Math.max(240, innerHeight || 720);
     camera.aspect = W / H; camera.updateProjectionMatrix();
@@ -127,6 +138,8 @@ function prepWorld(g){
     if (!o.isMesh) return;
     o.frustumCulled = true;
     const nm = o.name || '';
+    o.receiveShadow = true;
+    if (!nm.startsWith('Terrain') && !nm.startsWith('SRM_Trail')) o.castShadow = true;
     if (nm.startsWith('Terrain')) {
       colorizeTerrain(o);
     } else if (nm.startsWith('SRM_Trail')) {
@@ -152,6 +165,7 @@ function prepWorld(g){
 
 function prepLino(lg){
   lino = new THREE.Group();
+  lg.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
   lino.add(lg.scene);
   scene.add(lino);
   if (lg.animations && lg.animations.length) {
@@ -241,8 +255,21 @@ function updateHUD(){
   $('v-q').innerHTML = Math.round(quotaAt(st.s)) + '<span class="unit"> m</span>';
   const z = zoneAt(km), zi = route.zones.indexOf(z);
   if (zi !== st.curZone) { st.curZone = zi; $('zona-n').textContent = z[2]; $('zona-s').textContent = z[3]; }
-  const tr = trailAt(km);
-  if ($('chip').textContent !== tr) $('chip').textContent = tr;
+  const rd = (route.roads || []).find(r => r.n && km >= r.a && km < r.b);
+  const key = rd ? 'via:' + rd.n : 'tr:' + trailAt(km);
+  if (st.curKey !== key) {
+    st.curKey = key;
+    if (rd) {
+      $('chip').style.display = 'none';
+      $('sent-lab').style.display = 'block';
+      $('sent-lab').innerHTML = '<span style="display:block;font-size:9px;letter-spacing:.2em;color:var(--grigio)">SU STRADA</span>' +
+        '<span style="color:var(--avorio);font-size:12px;letter-spacing:.02em">' + rd.n + '</span>';
+    } else {
+      $('chip').style.display = 'flex';
+      $('sent-lab').innerHTML = 'SENTIERO PERCORSO';
+      $('chip').textContent = trailAt(km);
+    }
+  }
   let near = -1, best = 200;
   route.pois.forEach((p, i) => {
     const d = Math.abs(p.km * 1000 - st.s);
@@ -463,7 +490,8 @@ function colorizeTerrain(mesh){
 
 
 // ---------- ortofoto, griglia altezze, brecciato ----------
-let ORTHO = null, HG = null;
+let ORTHO = null, HG = null, sunLight = null, SHADOWS = false;
+const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
 const OC = [0, 0, 0];
 async function loadOrtho(){
   try {
@@ -526,10 +554,21 @@ function colorizeTrail(mesh){
     }
     const km = bj / (N - 1) * route.total_km;
     const t = clamp((km - 5.72) / 0.16, 0, 1) * clamp((6.68 - km) / 0.16, 0, 1);
+    let ta = 0;
+    for (const r of (route.roads || [])) {
+      if (!r.asf) continue;
+      ta = Math.max(ta, clamp((km - r.a + 0.06) / 0.1, 0, 1) * clamp((r.b - km + 0.06) / 0.1, 0, 1));
+    }
     let nz = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
     nz = nz - Math.floor(nz);
-    const nn = t > 0 ? 0.82 + 0.36 * nz : 1;
-    for (let c = 0; c < 3; c++) col[i * 3 + c] = (orange[c] * (1 - t) + brec[c] * t) * nn;
+    const asfC = [0.155, 0.16, 0.175];
+    let rC = orange[0] * (1 - ta) + asfC[0] * ta, gC = orange[1] * (1 - ta) + asfC[1] * ta,
+        bC = orange[2] * (1 - ta) + asfC[2] * ta;
+    const nn = t > 0 ? 0.82 + 0.36 * nz : (ta > 0 ? 0.92 + 0.16 * nz : 1);
+    for (let c = 0; c < 3; c++) {
+      const base = c === 0 ? rC : c === 1 ? gC : bC;
+      col[i * 3 + c] = (base * (1 - t) + brec[c] * t) * nn;
+    }
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   mesh.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
@@ -542,7 +581,7 @@ function peakLabel(nome, quota){
   const c = document.createElement('canvas'); c.width = 1024; c.height = 192;
   const x = c.getContext('2d');
   const testo = nome.toUpperCase() + (quota ? '  \u00b7  ' + quota + ' m' : '');
-  x.font = '400 72px Anton, Oswald, sans-serif';
+  x.font = '400 86px Anton, Oswald, sans-serif';
   const w = Math.min(990, x.measureText(testo).width + 84);
   const x0 = (1024 - w) / 2;
   x.fillStyle = 'rgba(12,31,20,0.84)';
@@ -601,6 +640,7 @@ async function loadVeg(loader){
     if (!proto || !arr.length) continue;
     if (proto.material && proto.material.isMeshStandardMaterial) {
       proto.material.metalness = 0; proto.material.roughness = 0.95;
+      if (proto.material.color.getHexString() === '2743c7') proto.material.color.setHex(0x225220);
     }
     const im = new THREE.InstancedMesh(proto.geometry, proto.material, arr.length);
     for (let i = 0; i < arr.length; i++) {
@@ -613,6 +653,7 @@ async function loadVeg(loader){
     }
     im.instanceMatrix.needsUpdate = true;
     im.frustumCulled = false;
+    im.castShadow = true;
     scene.add(im);
   }
   console.log('vegetazione:', Object.keys(veg.inst).map(k => k + ':' + veg.inst[k].length).join(', '));
@@ -641,9 +682,9 @@ function tick(){
   posAt(st.s, tmpA); tanAt(st.s, tmpB);
   lino.position.copy(tmpA);
   const rotY = Math.atan2(-tmpB.z, tmpB.x);
-  const pitch = Math.asin(clamp(tmpB.y, -0.75, 0.75)) * 0.55;
+  const pitch = Math.asin(clamp(tmpB.y, -0.75, 0.75));
   lino.quaternion.setFromEuler(new THREE.Euler(0, rotY, 0));
-  lino.rotateZ(pitch);
+  lino.rotateZ(-0.10 - pitch * 0.18);
   if (mixer) { mixer.timeScale = clamp(0.25 + st.speed / 42, 0, 2.6) * (st.speed < 1 ? 0 : 1); mixer.update(dt); }
   // camera
   tanAt(st.s + 8, tmpC);
@@ -666,6 +707,11 @@ function tick(){
   }
   const gmin = groundAt(camera.position.x, camera.position.z) + 13;
   if (camera.position.y < gmin) camera.position.y = gmin;
+  if (SHADOWS && sunLight) {
+    sunLight.position.set(tmpA.x + SUNDIR.x * 2300, tmpA.y + SUNDIR.y * 2300, tmpA.z + SUNDIR.z * 2300);
+    sunLight.target.position.copy(tmpA);
+    sunLight.target.updateMatrixWorld();
+  }
   // grifoni
   const tNow = performance.now() / 1000;
   for (const m of grifs) {
@@ -679,11 +725,11 @@ function tick(){
     peakT = 0;
     for (const g of peakItems) {
       const d = camera.position.distanceTo(g.position);
-      g.visible = d < 6500;
+      g.visible = d < 7500;
       if (!g.visible) continue;
-      const o = d < 900 ? 1 : Math.max(0, 1 - (d - 900) / 2600);
+      const o = d < 1400 ? 1 : Math.max(0, 1 - (d - 1400) / 3000);
       g.userData.lbl.material.opacity = o;
-      const s2 = clamp(d * 0.075, 26, 125);
+      const s2 = clamp(d * 0.11, 44, 190);
       g.userData.lbl.scale.set(s2, s2 * 0.1875, 1);
       g.userData.flag.rotation.y = Math.sin(performance.now() / 1400 + g.position.x) * 0.7;
     }
