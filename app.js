@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v30';
+const VER = 'v31';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -288,21 +288,8 @@ function prepWorld(g){
       scene.add(m); grifs.push(m);
     }
   }
-  // Capanna di Sevice: al tornante del km 14,69, base incassata nel suolo
-  const hutS = window._hutS;
-  if (hutS) {
-    hutS.position.set(-1213.5, 1560, -2740.6);
-    hutS.rotation.y = HUT_YAW;
-    hutS.geometry.computeBoundingBox();
-    let gm = 1e9;
-    for (const off of [[0, 0], [11, 0], [-11, 0], [0, 11], [0, -11]]) {
-      const gg = groundAt(-1213.5 + off[0], -2740.6 + off[1]);
-      if (gg > -1e3) gm = Math.min(gm, gg);
-    }
-    if (gm < 1e8) hutS.position.y = (gm - 0.8) - hutS.geometry.boundingBox.min.y * hutS.scale.x;
-  }
+  // Capanna di Sevice: posizionata da Ale direttamente nel master
 }
-let HUT_YAW = 5.3416;  // porta+panca verso il nastro
 
 function prepLino(lg){
   lino = new THREE.Group();
@@ -362,48 +349,71 @@ function pinSprite(color){
   tex.anisotropy = 4;
   return new THREE.SpriteMaterial({ map: tex, depthTest: true, sizeAttenuation: true });
 }
-// data di gara composta coi sassi al km 14,74 (lato destro, leggibile dal nastro)
+// data di gara coi sassi: tratti continui dentro il rettangolo segnato da Ale
 function buildDataSassi(){
-  const FONT = {
-    '0': ['111','101','101','101','111'], '1': ['010','110','010','010','111'],
-    '2': ['111','001','111','100','111'], '6': ['111','100','111','101','111'],
-    '8': ['111','101','111','101','111'], '9': ['111','101','111','001','111'],
-    '-': ['000','000','111','000','000']
+  // box guida (dal master): centro scena (-1166, 2683.4), rotz 30 gradi, 34.5 x 9.3 m
+  const CX = -1166, CZ = 2683.4 * -1;
+  const advX = 0.5, advZ = 0.866;      // senso di lettura (scena (0.5,-0.866) -> three)
+  const upX = 0.866, upZ = -0.5;       // "alto" dei glifi, lato opposto al nastro
+  const U = 0.7;
+  const SEG = {
+    '0': [[0,0,2,0],[2,0,2,4],[2,4,0,4],[0,4,0,0]],
+    '1': [[1,0,1,4],[0.2,3.1,1,4],[0.3,0,1.7,0]],
+    '2': [[0,4,2,4],[2,4,2,2],[2,2,0,2],[0,2,0,0],[0,0,2,0]],
+    '6': [[2,4,0,4],[0,4,0,0],[0,0,2,0],[2,0,2,2],[2,2,0,2]],
+    '8': [[0,0,2,0],[2,0,2,4],[2,4,0,4],[0,4,0,0],[0,2,2,2]],
+    '9': [[2,0,2,4],[2,4,0,4],[0,4,0,2],[0,2,2,2]],
+    '-': [[0.2,2,1.8,2]]
   };
   const testo = '18-10-2026';
-  const U = 2.4;                       // metri per cella
-  posAt(14740, tmpA); tanAt(14740, tmpB);
-  const tx = tmpB.x, tz = tmpB.z;
-  const rx = -tz, rz = tx;             // destra di marcia (y su)
-  const punti = [];                    // [lungo, fuori]
-  let cx0 = -(testo.length * 4 * U) / 2 - 3 * U;
+  const punti = [];   // [a, b] nel piano del box
+  const passo = 0.44;
+  const tratto = (x1, y1, x2, y2, a0) => {
+    const L = Math.hypot(x2 - x1, y2 - y1) * U;
+    const n = Math.max(2, Math.round(L / passo) + 1);
+    for (let k = 0; k <= n; k++) {
+      const t = k / n;
+      punti.push([a0 + (x1 + (x2 - x1) * t) * U + (Math.random() - 0.5) * 0.16,
+                  (y1 + (y2 - y1) * t) * U - 2 * U + (Math.random() - 0.5) * 0.16]);
+    }
+  };
+  const totU = testo.length * 3 + (testo.length - 1) * 1.2 + 1.2 + 4;
+  let a0 = -totU * U / 2;
   for (const ch of testo) {
-    const g = FONT[ch];
-    if (g) for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++)
-      if (g[r][c] === '1') punti.push([cx0 + c * U, (4 - r) * U]);
-    cx0 += 4 * U;
+    for (const s2 of (SEG[ch] || [])) tratto(s2[0], s2[1], s2[2], s2[3], a0);
+    a0 += 4.2 * U;
   }
-  // cuore parametrico dopo la data
-  cx0 += U;
-  for (let a = 0; a < Math.PI * 2; a += 0.42) {
-    const hx = 16 * Math.pow(Math.sin(a), 3);
-    const hy = 13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a);
-    punti.push([cx0 + 1.6 * U + hx * U / 8, 2.1 * U + hy * U / 8]);
+  a0 += 1.2 * U;
+  let prev = null;
+  for (let t = 0; t <= 1.001; t += 0.055) {
+    const ang = t * Math.PI * 2;
+    const hx = 16 * Math.pow(Math.sin(ang), 3);
+    const hy = 13 * Math.cos(ang) - 5 * Math.cos(2 * ang) - 2 * Math.cos(3 * ang) - Math.cos(4 * ang);
+    const px2 = a0 + 2 * U + hx * U / 8.5, py2 = hy * U / 8.5;
+    if (prev) {
+      const L = Math.hypot(px2 - prev[0], py2 - prev[1]);
+      const n = Math.max(1, Math.round(L / passo));
+      for (let k = 1; k <= n; k++) {
+        const tt = k / n;
+        punti.push([prev[0] + (px2 - prev[0]) * tt + (Math.random() - 0.5) * 0.14,
+                    prev[1] + (py2 - prev[1]) * tt + (Math.random() - 0.5) * 0.14]);
+      }
+    }
+    prev = [px2, py2];
   }
-  const geo = new THREE.DodecahedronGeometry(0.55, 0);
+  const geo = new THREE.DodecahedronGeometry(0.31, 0);
   const mat = new THREE.MeshStandardMaterial({ color: 0xdbd8cf, roughness: 1, metalness: 0 });
   const im = new THREE.InstancedMesh(geo, mat, punti.length);
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(), S = new THREE.Vector3();
-  let k = 0;
+  let k2 = 0;
   for (const [a, b] of punti) {
-    const off = 10 + b;                             // 10 m dal nastro + altezza glifo
-    const wx = tmpA.x - tx * a + rx * off;          // avanzamento -t per lettura dal nastro
-    const wz = tmpA.z - tz * a + rz * off;
+    const wx = CX + advX * a + upX * b;
+    const wz = CZ + advZ * a + upZ * b;
     const wy = groundAt(wx, wz);
-    Q.setFromEuler(E.set(Math.random() * 0.6, Math.random() * 3.14, Math.random() * 0.6));
-    S.setScalar(0.7 + Math.random() * 0.4);
-    M.compose(new THREE.Vector3(wx, (wy > -1e3 ? wy : tmpA.y) + 0.3, wz), Q, S);
-    im.setMatrixAt(k++, M);
+    Q.setFromEuler(E.set(Math.random() * 0.7, Math.random() * 3.14, Math.random() * 0.7));
+    S.setScalar(0.82 + Math.random() * 0.36);
+    M.compose(new THREE.Vector3(wx, (wy > -1e3 ? wy : 1548) + 0.16, wz), Q, S);
+    im.setMatrixAt(k2++, M);
   }
   im.instanceMatrix.needsUpdate = true;
   im.frustumCulled = false;
