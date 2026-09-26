@@ -5,7 +5,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v28';
+const VER = 'v29';
+let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
 const clamp = THREE.MathUtils.clamp, lerp = THREE.MathUtils.lerp;
@@ -32,6 +33,7 @@ const prog = f => { $('load-bar').style.width = Math.round(f * 100) + '%'; };
 
 window._loaderShow = loaderShow;
 function loaderShow(){
+  LOADT0 = performance.now();
   const box = $('spinbox'); if (!box) return;
   const img = new Image();
   let timer = null, chipT = null;
@@ -137,7 +139,17 @@ async function boot(){
         if (distNastro(cx, cz) > 13) { lx = cx; lz = cz; scelto = off; break; }
       }
       if (!scelto) { lx = tmpA.x + tmpB.z * 40; lz = tmpA.z - tmpB.x * 40; }
-      const ly = groundAt(lx, lz);
+      let ly = groundAt(lx, lz);
+      try {
+        let terr = null;
+        scene.traverse(o => { if (!terr && o.isMesh && (o.name || '').startsWith('Terrain')) terr = o; });
+        if (terr) {
+          const rc = new THREE.Raycaster(new THREE.Vector3(lx, (ly > -1e3 ? ly : tmpA.y) + 80, lz),
+                                         new THREE.Vector3(0, -1, 0), 0, 300);
+          const hit = rc.intersectObject(terr, false)[0];
+          if (hit) ly = hit.point.y;
+        }
+      } catch (e) {}
       l2.position.set(lx, ly > -1e3 ? ly + 0.05 : tmpA.y, lz);
       posAt(26300, tmpC);
       const hOld = Math.atan2(-(tmpC.z - lupoSrc.position.z), tmpC.x - lupoSrc.position.x);
@@ -164,14 +176,19 @@ async function boot(){
   const lg = await loadGLB(loader, 'assets/lino.glb?' + VER, p => prog(0.66 + 0.28 * p));
   prepLino(lg);
   buildPins();
+  try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { await document.fonts.load('400 72px Anton'); } catch (e) {}
   buildPeaks();
   buildProfile(); buildMinimap(); bindUI();
   const h = location.hash.match(/km=([\d.]+)/);
   if (h) st.s = clamp(parseFloat(h[1]) * 1000, 0, TOT);
   st.ready = true; prog(1);
-  $('loader').style.display = 'none';
-  if (window._loaderStop) window._loaderStop();
+  {
+    const chiudi = () => { $('loader').style.display = 'none'; if (window._loaderStop) window._loaderStop(); };
+    const resta = LOADT0 ? 6500 - (performance.now() - LOADT0) : 0;
+    if (resta > 0) { $('load-step').textContent = 'si parte!'; setTimeout(chiudi, resta); }
+    else chiudi();
+  }
   try { if (!localStorage.getItem('srmx_help')) { showHelp(); localStorage.setItem('srmx_help', '1'); } }
   catch (e) { /* storage bloccato: pazienza */ }
   window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
@@ -345,6 +362,56 @@ function pinSprite(color){
   tex.anisotropy = 4;
   return new THREE.SpriteMaterial({ map: tex, depthTest: true, sizeAttenuation: true });
 }
+// data di gara composta coi sassi al km 14,74 (lato destro, leggibile dal nastro)
+function buildDataSassi(){
+  const FONT = {
+    '0': ['111','101','101','101','111'], '1': ['010','110','010','010','111'],
+    '2': ['111','001','111','100','111'], '6': ['111','100','111','101','111'],
+    '8': ['111','101','111','101','111'], '9': ['111','101','111','001','111'],
+    '-': ['000','000','111','000','000']
+  };
+  const testo = '18-10-2026';
+  const U = 2.4;                       // metri per cella
+  posAt(14740, tmpA); tanAt(14740, tmpB);
+  const tx = tmpB.x, tz = tmpB.z;
+  const rx = -tz, rz = tx;             // destra di marcia (y su)
+  const punti = [];                    // [lungo, fuori]
+  let cx0 = -(testo.length * 4 * U) / 2 - 3 * U;
+  for (const ch of testo) {
+    const g = FONT[ch];
+    if (g) for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++)
+      if (g[r][c] === '1') punti.push([cx0 + c * U, (4 - r) * U]);
+    cx0 += 4 * U;
+  }
+  // cuore parametrico dopo la data
+  cx0 += U;
+  for (let a = 0; a < Math.PI * 2; a += 0.42) {
+    const hx = 16 * Math.pow(Math.sin(a), 3);
+    const hy = 13 * Math.cos(a) - 5 * Math.cos(2 * a) - 2 * Math.cos(3 * a) - Math.cos(4 * a);
+    punti.push([cx0 + 1.6 * U + hx * U / 8, 2.1 * U + hy * U / 8]);
+  }
+  const geo = new THREE.DodecahedronGeometry(0.55, 0);
+  const mat = new THREE.MeshStandardMaterial({ color: 0xdbd8cf, roughness: 1, metalness: 0 });
+  const im = new THREE.InstancedMesh(geo, mat, punti.length);
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(), S = new THREE.Vector3();
+  let k = 0;
+  for (const [a, b] of punti) {
+    const off = 10 + b;                             // 10 m dal nastro + altezza glifo
+    const wx = tmpA.x - tx * a + rx * off;          // avanzamento -t per lettura dal nastro
+    const wz = tmpA.z - tz * a + rz * off;
+    const wy = groundAt(wx, wz);
+    Q.setFromEuler(E.set(Math.random() * 0.6, Math.random() * 3.14, Math.random() * 0.6));
+    S.setScalar(0.7 + Math.random() * 0.4);
+    M.compose(new THREE.Vector3(wx, (wy > -1e3 ? wy : tmpA.y) + 0.3, wz), Q, S);
+    im.setMatrixAt(k++, M);
+  }
+  im.instanceMatrix.needsUpdate = true;
+  im.frustumCulled = false;
+  im.castShadow = true;
+  im.name = 'DataSassi';
+  scene.add(im);
+}
+
 function buildPins(){
   pinGroup = new THREE.Group();
   for (const p of route.pois) {
@@ -686,6 +753,8 @@ function colorizeTerrain(mesh){
   float d1 = texture2D(uDet, vDetXZ / 19.0).r;
   float d2 = texture2D(uDet, vDetXZ / 141.0).g;
   diffuseColor.rgb *= mix(0.84, 1.16, d1) * mix(0.92, 1.08, d2);
+  vec3 gGr = vec3(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)));
+  diffuseColor.rgb = clamp((mix(gGr, diffuseColor.rgb, 1.30) - 0.5) * 1.07 + 0.5, 0.0, 1.0);
 }`);
     };
     mesh.material = matT;
