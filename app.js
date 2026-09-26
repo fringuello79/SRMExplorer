@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v35';
+const VER = 'v36';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -50,13 +50,13 @@ function loaderShow(){
         el.style.backgroundPosition = (-(frame % m.cols) * W) + 'px ' + (-Math.floor(frame / m.cols) * H) + 'px';
       }, 80);
       const tags = [
-        ['FACCIA DA SINDACO', 'chi vi ricorda?', 0.50, 0.13, 1],
-        ['FISICO ATLETICO', '(o quasi)', 0.44, 0.40, -1],
-        ['SCARPE TECNICHE DA MONTAGNA', 'collaudate sul brecciato', 0.52, 0.90, 1],
-        ['BASTONCINI OMOLOGATI', 'riconsegna a Porclaneta, mi raccomando', 0.64, 0.56, 1],
+        ['FACCIA DA SINDACO', 'ricorda qualcuno', 0.50, 0.13, 1],
+        ['FISICO ATLETICO', 'o quasi', 0.44, 0.40, -1],
+        ['SCARPE TECNICHE', 'collaudate sul brecciato', 0.52, 0.90, 1],
+        ['MATERIALE OBBLIGATORIO', 'occhio che lo controlliamo', 0.64, 0.56, 1],
         ['GAMBE DA 2.109 M D+', 'garanzia 29,7 km', 0.44, 0.73, -1],
         ['SGUARDO FISSO SUL VELINO', 'o sul primo ristoro?', 0.54, 0.16, -1],
-        ['ZAINO LEGGERO', "dentro c'\u00e8 tutta l'acqua del Regolamento", 0.40, 0.35, 1],
+        ['ZAINO LEGGERO', 'con tanta acqua e sali', 0.40, 0.35, 1],
       ];
       let ti = Math.floor(Math.random() * tags.length);
       const chip = $('spin-chip'), svg = $('spin-svg');
