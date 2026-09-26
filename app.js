@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v34';
+const VER = 'v35';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -183,6 +183,12 @@ async function boot(){
       l3w.rotation.y += (hNew2 - hOld);
       scene.add(l3w);
       poggia(l3w);
+      // regola poggia: vale anche per i lupi nativi di scene.glb
+      ['Lupo_Rozza', 'Lupo_Bosco'].forEach(nm2 => {
+        const wn = world.scene.getObjectByName(nm2);
+        if (wn) poggia(wn);
+      });
+      poggia(lupoSrc);
     }
   } catch (e) { console.warn('lupo discesa:', e); }
   loader.load('assets/extras.glb?' + VER, g => {
@@ -193,6 +199,23 @@ async function boot(){
       if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.metalness = 0;
       if (nomiC.includes(o.name)) o.position.add(dP);
     });
+    // incudine: seconda punta laterale (specchio del corno rispetto al centro del corpo)
+    try {
+      const corno = g.scene.getObjectByName('Ristoro_incudine_corno');
+      const corpo = g.scene.getObjectByName('Ristoro_incudine_corpo');
+      if (corno && corpo) {
+        corpo.updateMatrixWorld(true);
+        const bc = new THREE.Box3().setFromObject(corpo);
+        const CXi = (bc.min.x + bc.max.x) / 2, CZi = (bc.min.z + bc.max.z) / 2;
+        const c2 = corno.clone();
+        c2.name = 'Ristoro_incudine_corno2';
+        const Mi = new THREE.Matrix4().makeTranslation(CXi, 0, CZi)
+          .multiply(new THREE.Matrix4().makeRotationY(Math.PI))
+          .multiply(new THREE.Matrix4().makeTranslation(-CXi, 0, -CZi));
+        c2.applyMatrix4(Mi);
+        g.scene.add(c2);
+      }
+    } catch (e) { console.warn('corno2:', e); }
     scene.add(g.scene);
   }, undefined, () => console.warn('extras assente'));
   loader.load('assets/borghi.glb?' + VER, g => {
@@ -286,7 +309,8 @@ function buildStage(){
   addEventListener('resize', () => {
     const W = Math.max(320, innerWidth || 1280), H = Math.max(240, innerHeight || 720);
     camera.aspect = W / H; camera.updateProjectionMatrix();
-    renderer.setSize(W, H); sizeProfile(); drawProfilePos();
+    renderer.setSize(W, H);
+    if (typeof profCv !== 'undefined' && profCv) { sizeProfile(); drawProfilePos(); }
   });
 }
 
@@ -302,6 +326,20 @@ function prepWorld(g){
     } else if (nm.startsWith('SRM_Trail')) {
       colorizeTrail(o);
       o.renderOrder = 1;
+    } else if (nm === 'ArchTxt') {
+      // scritta SRM: piu' grande attorno al centro del suo bbox + 0.45 verso chi arriva
+      try {
+        o.updateMatrixWorld(true);
+        const bbT = new THREE.Box3().setFromObject(o);
+        const cT = bbT.getCenter(new THREE.Vector3());
+        const sT = 2.2;   // 2.6 sbordava di ~10 cm sotto il banner
+        o.position.sub(cT).multiplyScalar(sT).add(cT);
+        o.scale.multiplyScalar(sT);
+        posAt(29550, tmpA);
+        const nT = new THREE.Vector3(tmpA.x - cT.x, 0, tmpA.z - cT.z).normalize();
+        o.position.add(nT.multiplyScalar(0.45));
+      } catch (e) { console.warn('ArchTxt:', e); }
+      if (o.material && o.material.isMeshStandardMaterial) { o.material.metalness = 0; o.material.roughness = 0.9; }
     } else if (nm === 'Forest' || nm.startsWith('Forest')) {
       o.visible = false;
     } else if (nm.startsWith('Clouds')) {
