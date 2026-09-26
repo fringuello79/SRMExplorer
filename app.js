@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v33';
+const VER = 'v34';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -157,6 +157,7 @@ async function boot(){
       const hNew = Math.atan2(-(tmpA.z - lz), tmpA.x - lx);
       l2.rotation.y += (hNew - hOld);
       scene.add(l2);
+      poggia(l2);
       // secondo lupo: km 11,8, lato sinistro, poco prima della scarpata
       const l3w = lupoSrc.clone();
       posAt(11800, tmpA); tanAt(11800, tmpB);
@@ -181,6 +182,7 @@ async function boot(){
       const hNew2 = Math.atan2(-(tmpA.z - mz), tmpA.x - mx);
       l3w.rotation.y += (hNew2 - hOld);
       scene.add(l3w);
+      poggia(l3w);
     }
   } catch (e) { console.warn('lupo discesa:', e); }
   loader.load('assets/extras.glb?' + VER, g => {
@@ -879,6 +881,27 @@ function groundAt(x, z){
   const gg = (jj, ii) => HG.data[Math.min(jj, HG.ny - 1) * HG.nx + Math.min(ii, HG.nx - 1)] * HG.scala;
   return gg(j, i) * (1 - fu) * (1 - fv) + gg(j, i + 1) * fu * (1 - fv) +
          gg(j + 1, i) * (1 - fu) * fv + gg(j + 1, i + 1) * fu * fv;
+}
+// REGOLA FISSA: ogni oggetto appoggiato al suolo passa da poggia() —
+// il punto piu' basso del bounding box tocca terra (+3 cm), mai annegato ne' volante.
+function poggia(obj, margine = 0.03){
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  if (box.isEmpty()) return;
+  const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
+  let gy = groundAt(cx, cz);
+  try {
+    let terr = null;
+    scene.traverse(o => { if (!terr && o.isMesh && (o.name || '').startsWith('Terrain')) terr = o; });
+    if (terr) {
+      const rc = new THREE.Raycaster(new THREE.Vector3(cx, box.max.y + 120, cz),
+                                     new THREE.Vector3(0, -1, 0), 0, 600);
+      const hit = rc.intersectObject(terr, false)[0];
+      if (hit) gy = hit.point.y;
+    }
+  } catch (e) {}
+  if (gy < -1e3) return;
+  obj.position.y += gy - box.min.y + margine;
 }
 function colorizeTrail(mesh){
   const g = mesh.geometry, p = g.getAttribute('position');
