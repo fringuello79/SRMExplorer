@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v31';
+const VER = 'v32';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -157,10 +157,40 @@ async function boot(){
       const hNew = Math.atan2(-(tmpA.z - lz), tmpA.x - lx);
       l2.rotation.y += (hNew - hOld);
       scene.add(l2);
+      // secondo lupo: km 11,8, lato sinistro, poco prima della scarpata
+      const l3w = lupoSrc.clone();
+      posAt(11800, tmpA); tanAt(11800, tmpB);
+      let mx = 0, mz = 0, sc2 = 0;
+      for (const off of [18, 26, 34, -18]) {
+        const cx = tmpA.x + tmpB.z * off, cz = tmpA.z - tmpB.x * off;
+        if (distNastro(cx, cz) > 11) { mx = cx; mz = cz; sc2 = off; break; }
+      }
+      if (!sc2) { mx = tmpA.x + tmpB.z * 26; mz = tmpA.z - tmpB.x * 26; }
+      let ly2 = groundAt(mx, mz);
+      try {
+        let terr2 = null;
+        scene.traverse(o => { if (!terr2 && o.isMesh && (o.name || '').startsWith('Terrain')) terr2 = o; });
+        if (terr2) {
+          const rc2 = new THREE.Raycaster(new THREE.Vector3(mx, (ly2 > -1e3 ? ly2 : tmpA.y) + 80, mz),
+                                          new THREE.Vector3(0, -1, 0), 0, 300);
+          const h2 = rc2.intersectObject(terr2, false)[0];
+          if (h2) ly2 = h2.point.y;
+        }
+      } catch (e) {}
+      l3w.position.set(mx, ly2 > -1e3 ? ly2 + 0.05 : tmpA.y, mz);
+      const hNew2 = Math.atan2(-(tmpA.z - mz), tmpA.x - mx);
+      l3w.rotation.y += (hNew2 - hOld);
+      scene.add(l3w);
     }
   } catch (e) { console.warn('lupo discesa:', e); }
   loader.load('assets/extras.glb?' + VER, g => {
-    g.scene.traverse(o => { if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.metalness = 0; });
+    const dP = new THREE.Vector3(28.0, 3.21, -23.0);   // vecchia piazza -> centro piazza ruotata
+    const nomiC = ['Ristoro_ceppo', 'Ristoro_incudine_base', 'Ristoro_incudine_vita',
+                   'Ristoro_incudine_corpo', 'Ristoro_incudine_corno'];
+    g.scene.traverse(o => {
+      if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.metalness = 0;
+      if (nomiC.includes(o.name)) o.position.add(dP);
+    });
     scene.add(g.scene);
   }, undefined, () => console.warn('extras assente'));
   loader.load('assets/borghi.glb?' + VER, g => {
@@ -177,6 +207,7 @@ async function boot(){
   prepLino(lg);
   buildPins();
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
+  try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
   try { await document.fonts.load('400 72px Anton'); } catch (e) {}
   buildPeaks();
   buildProfile(); buildMinimap(); bindUI();
@@ -420,6 +451,30 @@ function buildDataSassi(){
   im.castShadow = true;
   im.name = 'DataSassi';
   scene.add(im);
+}
+
+function buildNubiBasse(){
+  const g = new THREE.Group(); g.name = 'NubiBasse';
+  const geo = new THREE.SphereGeometry(1, 10, 8);
+  const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, depthWrite: false });
+  let lato = 1;
+  for (const km of [16.15, 16.5, 16.85, 17.15, 17.5, 17.8, 18.1]) {
+    posAt(km * 1000, tmpA); tanAt(km * 1000, tmpB);
+    lato = -lato;
+    const off = (36 + Math.random() * 48) * lato;
+    const px2 = tmpA.x + tmpB.z * off, pz2 = tmpA.z - tmpB.x * off;
+    const gy = groundAt(px2, pz2);
+    const nucleo = new THREE.Group();
+    for (let p2 = 0; p2 < 4; p2++) {
+      const s = new THREE.Mesh(geo, mat);
+      s.position.set((Math.random() - 0.5) * 24, (Math.random() - 0.5) * 5, (Math.random() - 0.5) * 15);
+      s.scale.set(9 + Math.random() * 8, 3.2 + Math.random() * 2.4, 7 + Math.random() * 6);
+      nucleo.add(s);
+    }
+    nucleo.position.set(px2, (gy > -1e3 ? gy : tmpA.y) + 26 + Math.random() * 18, pz2);
+    g.add(nucleo);
+  }
+  scene.add(g);
 }
 
 function buildPins(){
@@ -1011,7 +1066,9 @@ function tick(){
     camTgt.lerp(tmpB.copy(tmpA).add(tmpD.set(0, 10 + 22 * kv, 0)), 1 - Math.exp(-5 * dt));
     controls.target.copy(camTgt);
     if (st.view === 'follow') {
-      tmpD.copy(tmpA).addScaledVector(tmpC, -(80 + 78 * kv)); tmpD.y = tmpA.y + 42 + 88 * kv;
+      const bnd = clamp((st.s - 15700) / 600, 0, 1) * clamp((18400 - st.s) / 600, 0, 1);
+      tmpD.copy(tmpA).addScaledVector(tmpC, -(80 + 78 * kv) * (1 - 0.18 * bnd));
+      tmpD.y = tmpA.y + (42 + 88 * kv) * (1 - 0.42 * bnd);
       camera.position.lerp(tmpD, 1 - Math.exp(-2.6 * dt));
     }
     controls.update();
