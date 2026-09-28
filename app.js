@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v38';
+const VER = 'v39';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -874,8 +874,14 @@ function colorizeTerrain(mesh){
     float s1 = texture2D(uDet, vDetXZ / 23.0).r;
     float s2 = texture2D(uDet, vDetXZ / 91.0).g;
     float s3 = texture2D(uDet, vDetXZ / 7.0).g;
-    float banda = 0.5 + 0.5 * sin((vWy + (s2 - 0.5) * 34.0) * 0.42);
-    float lum = 0.60 + 0.62 * (0.48 * banda + 0.36 * s1 + 0.16 * s3);
+    float s4 = texture2D(uDet, vDetXZ / 263.0).r;
+    float s5 = texture2D(uDet, vDetXZ / 47.0).g;
+    // strati appena accennati, frequenza e fase variabili, dominano le chiazze irregolari
+    float distors = (s2 - 0.5) * 90.0 + (s1 - 0.5) * 18.0;
+    float freq = 0.42 * (0.7 + 0.6 * s4);
+    float banda = 0.5 + 0.5 * sin((vWy + distors) * freq);
+    banda = mix(banda, s5, 0.5);
+    float lum = 0.58 + 0.62 * (0.20 * banda + 0.30 * s1 + 0.16 * s3 + 0.34 * s4);
     diffuseColor.rgb = mix(diffuseColor.rgb, tinta * lum, ripida);
   }
   float d1 = texture2D(uDet, vDetXZ / 19.0).r;
