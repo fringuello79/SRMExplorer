@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v37';
+const VER = 'v38';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -808,6 +808,17 @@ function detailTex(){
   DETTEX.needsUpdate = true;
   return DETTEX;
 }
+let _tintaTex = null;
+function tintaTex(){
+  if (_tintaTex || !ORTHO || !ORTHO.img) return _tintaTex;
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const x = c.getContext('2d');
+  x.drawImage(ORTHO.img, 0, 0, 128, 128);
+  _tintaTex = new THREE.CanvasTexture(c);
+  _tintaTex.colorSpace = THREE.SRGBColorSpace;
+  _tintaTex.wrapS = _tintaTex.wrapT = THREE.ClampToEdgeWrapping;
+  return _tintaTex;
+}
 function colorizeTerrain(mesh){
   const g = mesh.geometry;
   const pos = g.getAttribute('position');
@@ -848,13 +859,25 @@ function colorizeTerrain(mesh){
     const matT = new THREE.MeshStandardMaterial({ map: tex, vertexColors: true, roughness: 1, metalness: 0 });
     matT.onBeforeCompile = sh => {
       sh.uniforms.uDet = { value: detailTex() };
+      sh.uniforms.uTinta = { value: tintaTex() };
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nvarying vec2 vDetXZ;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDetXZ = (modelMatrix * vec4(position, 1.0)).xz;');
+        .replace('#include <common>', '#include <common>\nvarying vec2 vDetXZ;\nvarying vec2 vUvO;\nvarying float vNy;\nvarying float vWy;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDetXZ = (modelMatrix * vec4(position, 1.0)).xz;\nvUvO = uv;\nvNy = normalize(mat3(modelMatrix) * normal).y;\nvWy = (modelMatrix * vec4(position, 1.0)).y;');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uDet;\nvarying vec2 vDetXZ;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uDet;\nuniform sampler2D uTinta;\nvarying vec2 vDetXZ;\nvarying vec2 vUvO;\nvarying float vNy;\nvarying float vWy;')
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
+  // C: roccia procedurale sulle pareti ripide (la foto stirata sparisce)
+  float ripida = smoothstep(0.86, 0.62, abs(vNy));
+  if (ripida > 0.003) {
+    vec3 tinta = texture2D(uTinta, vUvO).rgb;
+    float s1 = texture2D(uDet, vDetXZ / 23.0).r;
+    float s2 = texture2D(uDet, vDetXZ / 91.0).g;
+    float s3 = texture2D(uDet, vDetXZ / 7.0).g;
+    float banda = 0.5 + 0.5 * sin((vWy + (s2 - 0.5) * 34.0) * 0.42);
+    float lum = 0.60 + 0.62 * (0.48 * banda + 0.36 * s1 + 0.16 * s3);
+    diffuseColor.rgb = mix(diffuseColor.rgb, tinta * lum, ripida);
+  }
   float d1 = texture2D(uDet, vDetXZ / 19.0).r;
   float d2 = texture2D(uDet, vDetXZ / 141.0).g;
   diffuseColor.rgb *= mix(0.84, 1.16, d1) * mix(0.92, 1.08, d2);
