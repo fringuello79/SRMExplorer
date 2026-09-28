@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v52';
+const VER = 'v53';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -387,6 +387,9 @@ function prepWorld(g){
     g.traverse(o => { if (o.isMesh && (o.name || '').startsWith('SRM_Trail')) trails.push(o); });
     for (const t of trails) {
       const smat = new THREE.ShadowMaterial({ opacity: 0.34 });
+      // il nastro ha le facce rivolte in giu' (il suo materiale e' DoubleSide):
+      // senza DoubleSide il catcher veniva scartato per intero (backface cull)
+      smat.side = THREE.DoubleSide;
       smat.depthWrite = false;
       smat.polygonOffset = true; smat.polygonOffsetFactor = -2; smat.polygonOffsetUnits = -2;
       const catcher = new THREE.Mesh(t.geometry, smat);
