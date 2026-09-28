@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v50';
+const VER = 'v51';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -592,6 +592,20 @@ function buildPins(){
 }
 
 // ---------- HUD ----------
+// La barra superiore non deve MAI crescere: se il nome della via eccede,
+// si riduce il carattere finche' entra nel tetto di #sent-lab (min 6.5px).
+function fitVia() {
+  const el = $('sent-lab'), vn = $('via-n');
+  if (!vn) return;
+  let fs = window.matchMedia('(max-width:700px)').matches ? 10 : 12;
+  vn.style.fontSize = fs + 'px';
+  while (el.scrollHeight > el.clientHeight + 1 && fs > 6.5) {
+    fs -= 0.5;
+    vn.style.fontSize = fs + 'px';
+  }
+}
+window.addEventListener('resize', fitVia);
+
 function updateHUD(){
   if (Math.abs(st.s - st.lastHudS) < 4 && st.sTarget === null) return;
   st.lastHudS = st.s;
@@ -624,8 +638,9 @@ function updateHUD(){
     if (rd) {
       $('chip').style.display = 'none';
       $('sent-lab').style.display = 'block';
-      $('sent-lab').innerHTML = '<span style="display:block;font-size:9px;letter-spacing:.2em;color:var(--grigio)">SU STRADA</span>' +
-        '<span style="color:var(--avorio);font-size:12px;letter-spacing:.02em">' + rd.n + '</span>';
+      $('sent-lab').innerHTML = '<span id="via-lab">SU STRADA</span>' +
+        '<span id="via-n">' + rd.n + '</span>';
+      fitVia();
     } else {
       $('chip').style.display = 'flex';
       $('sent-lab').innerHTML = 'SENTIERO';
@@ -1249,6 +1264,10 @@ function tick(){
   tanAt(st.s + 8, tmpC);
   if (st.view === 'fpv') {
     tmpD.copy(tmpA).addScaledVector(tmpC, 2.5); tmpD.y += 8.8;
+    // NIENTE clamp suolo in prima persona: groundAt (griglia coarse) sta
+    // sopra la linea del percorso fino a +22 e il vecchio clamp post-lerp
+    // (suolo+13 > occhio+8.8 sul 98% del tracciato) faceva tremare la vista.
+    // Raycast sulla mesh vera: 0/75 campioni sopra l'occhio -> sicuro.
     camera.position.lerp(tmpD, 1 - Math.exp(-14 * dt));
     tmpB.copy(tmpA).addScaledVector(tmpC, 90); tmpB.y += 14;
     camTgt.lerp(tmpB, 1 - Math.exp(-10 * dt));
@@ -1266,8 +1285,10 @@ function tick(){
     }
     controls.update();
   }
-  const gmin = groundAt(camera.position.x, camera.position.z) + 13;
-  if (camera.position.y < gmin) camera.position.y = gmin;
+  if (st.view !== 'fpv') {
+    const gmin = groundAt(camera.position.x, camera.position.z) + 13;
+    if (camera.position.y < gmin) camera.position.y = gmin;
+  }
   if (SHADOWS && sunLight) {
     sunLight.position.set(tmpA.x + SUNDIR.x * 2300, tmpA.y + SUNDIR.y * 2300, tmpA.z + SUNDIR.z * 2300);
     sunLight.target.position.copy(tmpA);
