@@ -123,14 +123,26 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
 @media (max-width:900px){
   #slot-gate{display:none}
 }
-@media (max-width:640px){
-  #zona-n{font-size:15px}
-  .val{font-size:18px}
+@media (max-width:700px){
+  .lab{font-size:8px;letter-spacing:.1em}
+  .val{font-size:14px}
+  .unit{font-size:9px}
+  #zona-n{font-size:13px}
+  #zona-s{font-size:10px}
+  .slot{padding:4px 6px 5px}
+  #slot-sent{gap:5px}
+  #chip{width:28px;height:28px;font-size:13px}
+  #sent-lab{font-size:8px;letter-spacing:.08em;max-width:52px}
   #slot-dp{display:none}
-  .slot{padding:6px 9px 7px}
-  #sent-lab{display:none}
-  #minimap{width:100px;height:100px}
+  #minimap{width:88px;height:88px}
   #sito{display:none}
+  #poi-banner{top:calc(50px + env(safe-area-inset-top));max-width:96vw;padding:4px 12px;border-radius:5px}
+  #poi-n{font-size:13px;line-height:1.15}
+  #poi-s{font-size:10px;line-height:1.3}
+  #ctrls{right:8px;gap:6px}
+  .btn{height:34px;font-size:11px;padding:0 9px;border-radius:8px}
+  .btn.big{width:46px;height:38px;font-size:17px}
+  #nav-hint{display:none}
 }
 </style>
 </head>
@@ -163,10 +175,10 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
     <div class="lab" id="g-lab">Cancello</div>
     <div class="val" id="v-g">&mdash;</div>
   </div>
-  <div id="logo-top"><img src="assets/srm_logo.png?v=47" alt="Skyrace del Maglio"></div>
+  <div id="logo-top"><img src="assets/srm_logo.png?v=48" alt="Skyrace del Maglio"></div>
   <div class="slot" id="slot-sent">
     <div id="chip">E1</div>
-    <div id="sent-lab">SENTIERO PERCORSO</div>
+    <div id="sent-lab">SENTIERO</div>
   </div>
 </header>
 
@@ -193,7 +205,7 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
 <div class="cover" id="loader">
   <div id="load-t">SRM <span>EXPLORER</span></div>
   <div id="load-sub">Skyrace del Maglio 2026 · percorso in 3D</div>
-  <img id="lino-nome" src="assets/lino_nome.png?v=47" alt="LINO">
+  <img id="lino-nome" src="assets/lino_nome.png?v=48" alt="LINO">
   <div id="spinbox">
     <div id="spin-img"></div>
     <svg id="spin-svg"></svg>
@@ -217,6 +229,6 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
 }}
 </script>
-<script type="module" src="app.js?v=47"></script>
+<script type="module" src="app.js?v=48"></script>
 </body>
 </html>

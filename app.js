@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v47';
+const VER = 'v48';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -628,7 +628,7 @@ function updateHUD(){
         '<span style="color:var(--avorio);font-size:12px;letter-spacing:.02em">' + rd.n + '</span>';
     } else {
       $('chip').style.display = 'flex';
-      $('sent-lab').innerHTML = 'SENTIERO PERCORSO';
+      $('sent-lab').innerHTML = 'SENTIERO';
       $('chip').textContent = trailAt(km);
     }
   }
@@ -800,7 +800,7 @@ function showHelp(){
     '<li><b>▶ / ◀</b> (o frecce della tastiera): Lino avanza e torna indietro lungo il percorso; tieni premuto per correre.</li>' +
     '<li><b>Trascina</b> con un dito o col mouse per girare intorno a Lino; <b>pizzica</b> o rotella per lo zoom.</li>' +
     '<li><b>SEGUI LINO</b> riaggancia la telecamera dietro di lui.</li>' +
-    '<li>Il <b>profilo altimetrico</b> in basso è cliccabile: tocca un punto e Lino ci va.</li>' +
+    '<li>Il <b>profilo altimetrico</b> in basso è cliccabile: tocca un punto e Lino si posizioner\u00e0 su di esso.</li>' +
     '<li>Tocca i <b>segnaposto</b> lungo il percorso per le schede dei punti di interesse.</li>' +
     '<li>La barra in alto dice sempre <b>dove sei</b>: zona, km, quota e numero del sentiero.</li></ul>');
 }
