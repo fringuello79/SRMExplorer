@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v46';
+const VER = 'v47';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -189,6 +189,22 @@ async function boot(){
         if (wn) poggia(wn);
       });
       poggia(lupoSrc);
+      // suolo VERO campionato lungo tutto il tratto estrapolato (arco -> km 0)
+      try {
+        const bers = [];
+        scene.traverse(o => { if (o.isMesh && (o.name === 'Terrain' || /^Piazza/.test(o.name || ''))) bers.push(o); });
+        const ye = [];
+        for (let k = 0; k <= 15; k++) {
+          posAt(S0_ARCO + k, tmpA);
+          const rc0 = new THREE.Raycaster(new THREE.Vector3(tmpA.x, 400, tmpA.z),
+                                          new THREE.Vector3(0, -1, 0), 0, 900);
+          const h0 = rc0.intersectObjects(bers, false)[0];
+          ye.push(h0 ? h0.point.y + 0.05 : null);
+        }
+        for (let k = 0; k <= 15; k++) if (ye[k] === null) ye[k] = k > 0 ? ye[k - 1] : route.z[0];
+        YEXT = ye;
+        Y0_ARCO = ye[0];
+      } catch (e) { console.warn('quota arco:', e); }
     }
   } catch (e) { console.warn('lupo discesa:', e); }
   loader.load('assets/extras.glb?' + VER, g => {
@@ -258,7 +274,8 @@ async function boot(){
   }
   try { if (!localStorage.getItem('srmx_help')) { showHelp(); localStorage.setItem('srmx_help', '1'); } }
   catch (e) { /* storage bloccato: pazienza */ }
-  window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
+  window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt,
+                  y0arco: () => Y0_ARCO, pos: s => { posAt(s, tmpC); return [tmpC.x, tmpC.y, tmpC.z]; }, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
                   poi: i => openPoi(route.pois[i]), gara: showGara, segui: v => setFollow(v, false),
                   anim: () => action ? { t: +action.time.toFixed(3), ts: +mixer.timeScale.toFixed(2),
                                          dur: +action.getClip().duration.toFixed(2) } : null,
@@ -397,11 +414,25 @@ function prepLino(lg){
 
 // ---------- percorso ----------
 const S0_ARCO = -15.0;   // partenza sotto l'arco: 15 m prima del km 0 lungo la tangente iniziale
+let Y0_ARCO = null;      // quota del suolo vero sotto l'arco (raycast al caricamento)
+let YEXT = null;         // suolo campionato ogni metro da s=-15 a s=0
 function posAt(s, out){
   if (s < 0) {
     const dx = route.x[2] - route.x[0], dy = route.y[2] - route.y[0];
     const L = Math.hypot(dx, dy) || 1;
-    return out.set(route.x[0] + dx / L * s, route.z[0], -(route.y[0] + dy / L * s));
+    let y;
+    if (YEXT) {
+      const f0 = clamp(s + 15, 0, 15);
+      const k0 = Math.min(14, Math.floor(f0));
+      const yg = YEXT[k0] + (YEXT[k0 + 1] - YEXT[k0]) * (f0 - k0);
+      const t0 = clamp(1 + s / 3.0, 0, 1);      // raccordo al nastro solo negli ultimi 3 m
+      y = yg * (1 - t0) + route.z[0] * t0;
+    } else {
+      const t0 = clamp(1 + s / 15.0, 0, 1);
+      const yA = (typeof Y0_ARCO === 'number') ? Y0_ARCO : route.z[0];
+      y = yA * (1 - t0) + route.z[0] * t0;
+    }
+    return out.set(route.x[0] + dx / L * s, y, -(route.y[0] + dy / L * s));
   }
   const f = clamp(s, 0, TOT) / TOT * (N - 1);
   const i = Math.min(Math.floor(f), N - 2), t = f - i;
