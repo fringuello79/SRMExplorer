@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v54';
+const VER = 'v55';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -277,13 +277,19 @@ async function boot(){
   else st.s = S0_ARCO;
   st.ready = true; prog(1);
   {
-    const chiudi = () => { $('loader').style.display = 'none'; if (window._loaderStop) window._loaderStop(); };
-    const resta = LOADT0 ? 6500 - (performance.now() - LOADT0) : 0;
-    if (resta > 0) { $('load-step').textContent = 'si parte!'; setTimeout(chiudi, resta); }
-    else chiudi();
+    // Lino continua a girare con le targhette finche' non si preme il pulsante
+    const chiudi = () => {
+      $('loader').style.display = 'none';
+      if (window._loaderStop) window._loaderStop();
+      try { if (!localStorage.getItem('srmx_help')) { showHelp(); localStorage.setItem('srmx_help', '1'); } }
+      catch (e) { /* storage bloccato: pazienza */ }
+    };
+    $('load-barw').style.display = 'none';
+    $('load-step').style.display = 'none';
+    const go = $('go-btn');
+    go.style.display = 'inline-block';
+    go.onclick = chiudi;
   }
-  try { if (!localStorage.getItem('srmx_help')) { showHelp(); localStorage.setItem('srmx_help', '1'); } }
-  catch (e) { /* storage bloccato: pazienza */ }
   window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt,
                   y0arco: () => Y0_ARCO, pos: s => { posAt(s, tmpC); return [tmpC.x, tmpC.y, tmpC.z]; }, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
                   poi: i => openPoi(route.pois[i]), gara: showGara, segui: v => setFollow(v, false),

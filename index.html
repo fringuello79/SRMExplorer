@@ -87,6 +87,10 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
 #load-barw{width:min(320px,70vw);height:6px;background:var(--verde2);border-radius:3px;overflow:hidden}
 #load-bar{height:100%;width:0%;background:var(--arancio);transition:width .2s}
 #load-step{margin-top:12px;font-size:13px;color:var(--grigio)}
+#go-btn{display:none;margin-top:16px;height:46px;padding:0 36px;border:none;border-radius:8px;
+  background:var(--arancio);color:#1d1206;font-family:Oswald,sans-serif;font-size:16px;
+  font-weight:600;letter-spacing:.1em;cursor:pointer}
+#go-btn:hover{filter:brightness(1.08)}
 #err{display:none;z-index:60}
 #errmsg{color:#ffb3a7;font-size:14px;max-width:480px;margin:14px 0 20px;font-family:"JetBrains Mono",monospace}
 #modal{display:none;position:fixed;inset:0;z-index:40;background:rgba(5,12,8,.72);
@@ -178,7 +182,7 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
     <div class="lab" id="g-lab">Cancello</div>
     <div class="val" id="v-g">&mdash;</div>
   </div>
-  <div id="logo-top"><img src="assets/srm_logo.png?v=54" alt="Skyrace del Maglio"></div>
+  <div id="logo-top"><img src="assets/srm_logo.png?v=55" alt="Skyrace del Maglio"></div>
   <div class="slot" id="slot-sent">
     <div id="chip">E1</div>
     <div id="sent-lab">SENTIERO</div>
@@ -208,7 +212,7 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
 <div class="cover" id="loader">
   <div id="load-t">SRM <span>EXPLORER</span></div>
   <div id="load-sub">Skyrace del Maglio 2026 · percorso in 3D</div>
-  <img id="lino-nome" src="assets/lino_nome.png?v=54" alt="LINO">
+  <img id="lino-nome" src="assets/lino_nome.png?v=55" alt="LINO">
   <div id="spinbox">
     <div id="spin-img"></div>
     <svg id="spin-svg"></svg>
@@ -216,6 +220,7 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   </div>
   <div id="load-barw"><div id="load-bar"></div></div>
   <div id="load-step">avvio…</div>
+  <button id="go-btn">VAI AL PERCORSO</button>
 </div>
 
 <div class="cover" id="err">
@@ -232,6 +237,6 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
 }}
 </script>
-<script type="module" src="app.js?v=54"></script>
+<script type="module" src="app.js?v=55"></script>
 </body>
 </html>
