@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v36';
+const VER = 'v37';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -942,9 +942,14 @@ function poggia(obj, margine = 0.03){
   obj.position.y += gy - box.min.y + margine;
 }
 function colorizeTrail(mesh){
+  // nastro a 2 colonne di vertici: il bordo arancione sull'asfalto vive nel fragment shader
   const g = mesh.geometry, p = g.getAttribute('position');
   const col = new Float32Array(p.count * 3);
+  const aSide = new Float32Array(p.count);
+  const aAsf = new Float32Array(p.count);
   const orange = [0.907, 0.31, 0.012], brec = [0.44, 0.415, 0.365];
+  const ASF = (route.roads || []).filter(r => r.asf).map(r => [r.a, r.b])
+    .concat([[0, 0.50], [29.25, route.total_km]]);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i);
     let best = 1e12, bj = 0;
@@ -953,26 +958,43 @@ function colorizeTrail(mesh){
       const d = dx * dx + dz * dz;
       if (d < best) { best = d; bj = j; }
     }
-    const km = bj / (N - 1) * route.total_km;
-    const t = clamp((km - 5.72) / 0.16, 0, 1) * clamp((6.68 - km) / 0.16, 0, 1);
-    let ta = 0;
-    for (const r of (route.roads || [])) {
-      if (!r.asf) continue;
-      ta = Math.max(ta, clamp((km - r.a + 0.06) / 0.1, 0, 1) * clamp((r.b - km + 0.06) / 0.1, 0, 1));
+    for (let j = Math.max(0, bj - 3); j <= Math.min(N - 1, bj + 3); j++) {
+      const dx = route.x[j] - x, dz = -route.y[j] - z;
+      const d = dx * dx + dz * dz;
+      if (d < best) { best = d; bj = j; }
     }
+    const km = bj / (N - 1) * route.total_km;
+    // lato del nastro (0/1): segno rispetto alla tangente locale
+    const j0 = Math.min(bj, N - 2);
+    const tx = route.x[j0 + 1] - route.x[j0], tz = -route.y[j0 + 1] + route.y[j0];
+    const rx = x - route.x[j0], rz = z + route.y[j0];
+    aSide[i] = (tx * rz - tz * rx) > 0 ? 1 : 0;
+    let ta = 0;
+    for (const r of ASF) {
+      ta = Math.max(ta, clamp((km - r[0] + 0.06) / 0.1, 0, 1) * clamp((r[1] - km + 0.06) / 0.1, 0, 1));
+    }
+    aAsf[i] = ta;
+    const t = clamp((km - 5.72) / 0.16, 0, 1) * clamp((6.68 - km) / 0.16, 0, 1);
     let nz = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
     nz = nz - Math.floor(nz);
-    const asfC = [0.155, 0.16, 0.175];
-    let rC = orange[0] * (1 - ta) + asfC[0] * ta, gC = orange[1] * (1 - ta) + asfC[1] * ta,
-        bC = orange[2] * (1 - ta) + asfC[2] * ta;
-    const nn = t > 0 ? 0.82 + 0.36 * nz : (ta > 0 ? 0.92 + 0.16 * nz : 1);
+    const nn = t > 0 ? 0.82 + 0.36 * nz : 1;
     for (let c = 0; c < 3; c++) {
-      const base = c === 0 ? rC : c === 1 ? gC : bC;
-      col[i * 3 + c] = (base * (1 - t) + brec[c] * t) * nn;
+      col[i * 3 + c] = (orange[c] * (1 - t) + brec[c] * t) * nn;
     }
   }
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  mesh.material = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  g.setAttribute('aSide', new THREE.BufferAttribute(aSide, 1));
+  g.setAttribute('aAsf', new THREE.BufferAttribute(aAsf, 1));
+  const m = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  m.onBeforeCompile = sh => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float aSide; attribute float aAsf; varying float vSide; varying float vAsf;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSide = aSide; vAsf = aAsf;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vSide; varying float vAsf;')
+      .replace('#include <color_fragment>', '#include <color_fragment>\n{\n  float bordo = smoothstep(0.68, 0.86, abs(vSide * 2.0 - 1.0));\n  vec3 grigioAsf = vec3(0.30, 0.305, 0.32);\n  vec3 aranc = vec3(0.907, 0.31, 0.012);\n  diffuseColor.rgb = mix(diffuseColor.rgb, mix(grigioAsf, aranc, bordo), vAsf);\n}');
+  };
+  mesh.material = m;
 }
 
 
