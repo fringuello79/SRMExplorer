@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v48';
+const VER = 'v49';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -1027,35 +1027,47 @@ function colorizeTrail(mesh){
   const orange = [0.907, 0.31, 0.012], brec = [0.44, 0.415, 0.365];
   const ASF = (route.roads || []).filter(r => r.asf).map(r => [r.a, r.b])
     .concat([[0, 0.50], [29.25, route.total_km]]);
+  // linea centrale del NASTRO dai suoi stessi vertici (le due rotaie si alternano
+  // in modo bilanciato: una media mobile di indici e' il centro locale del nastro)
+  const cxA = new Float64Array(p.count + 1), czA = new Float64Array(p.count + 1);
+  for (let i = 0; i < p.count; i++) {
+    cxA[i + 1] = cxA[i] + p.getX(i);
+    czA[i + 1] = czA[i] + p.getZ(i);
+  }
+  const cw = (a, b) => [(cxA[b + 1] - cxA[a]) / (b - a + 1), (czA[b + 1] - czA[a]) / (b - a + 1)];
+  // aggancio INSEGUITO: il nastro e' costruito in ordine lungo il percorso, quindi ogni
+  // vertice cerca solo vicino all'aggancio del precedente - un vertice dell'andata non
+  // puo' agganciare il ritorno dove le due gambe corrono sulla stessa strada.
+  let bjPrev = 0;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), z = p.getZ(i);
-    let best = 1e12, bj = 0;
-    for (let j = 0; j < N; j += 3) {
+    let best = 1e12, bj = bjPrev;
+    for (let j = Math.max(0, bjPrev - 40); j <= Math.min(N - 1, bjPrev + 40); j++) {
       const dx = route.x[j] - x, dz = -route.y[j] - z;
       const d = dx * dx + dz * dz;
       if (d < best) { best = d; bj = j; }
     }
-    for (let j = Math.max(0, bj - 3); j <= Math.min(N - 1, bj + 3); j++) {
-      const dx = route.x[j] - x, dz = -route.y[j] - z;
-      const d = dx * dx + dz * dz;
-      if (d < best) { best = d; bj = j; }
+    if (best > 900) {   // aggancio perso: ricerca globale di sicurezza
+      for (let j = 0; j < N; j += 3) {
+        const dx = route.x[j] - x, dz = -route.y[j] - z;
+        const d = dx * dx + dz * dz;
+        if (d < best) { best = d; bj = j; }
+      }
+      for (let j = Math.max(0, bj - 3); j <= Math.min(N - 1, bj + 3); j++) {
+        const dx = route.x[j] - x, dz = -route.y[j] - z;
+        const d = dx * dx + dz * dz;
+        if (d < best) { best = d; bj = j; }
+      }
     }
+    bjPrev = bj;
     const km = bj / (N - 1) * route.total_km;
-    // lato del nastro (0/1): segno del prodotto vettore con l'offset PERPENDICOLARE
-    // proiettato sui due segmenti adiacenti (il punto-piu'-vicino da solo e' rumoroso in curva)
-    let sd = 0;
-    for (const j0 of [Math.max(0, bj - 1), Math.min(bj, N - 2)]) {
-      const ax = route.x[j0], az = -route.y[j0];
-      const bx = route.x[j0 + 1], bz = -route.y[j0 + 1];
-      const abx = bx - ax, abz = bz - az;
-      const L2 = abx * abx + abz * abz;
-      if (!L2) continue;
-      const tt = ((x - ax) * abx + (z - az) * abz) / L2;
-      if (tt < -0.25 || tt > 1.25) continue;
-      const tc = clamp(tt, 0, 1);
-      const ox = x - (ax + abx * tc), oz = z - (az + abz * tc);
-      sd += abx * oz - abz * ox;
-    }
+    // lato del nastro (0/1): segno rispetto alla linea centrale del NASTRO stesso
+    // (robusto anche ai tappi d'estremita' e agli spigoli, dove la polilinea GPX diverge)
+    const W8 = 8;
+    const c0 = cw(Math.max(0, i - W8), Math.min(p.count - 1, i + W8));
+    const cb = cw(Math.max(0, i - 2 * W8), i);
+    const cf = cw(i, Math.min(p.count - 1, i + 2 * W8));
+    const sd = (cf[0] - cb[0]) * (z - c0[1]) - (cf[1] - cb[1]) * (x - c0[0]);
     aSide[i] = sd > 0 ? 1 : 0;
     let ta = 0;
     for (const r of ASF) {
@@ -1073,6 +1085,16 @@ function colorizeTrail(mesh){
   g.setAttribute('color', new THREE.BufferAttribute(col, 3));
   g.setAttribute('aSide', new THREE.BufferAttribute(aSide, 1));
   g.setAttribute('aAsf', new THREE.BufferAttribute(aAsf, 1));
+  // collaudo: nessun triangolo deve avere i 3 vertici sullo stesso lato
+  if (g.index) {
+    let uni = 0;
+    const ix = g.index.array;
+    for (let k = 0; k < ix.length; k += 3) {
+      if (aSide[ix[k]] === aSide[ix[k + 1]] && aSide[ix[k + 1]] === aSide[ix[k + 2]]) uni++;
+    }
+    window._trailUni = uni;
+    if (uni > 0) console.warn('nastro: ' + uni + ' triangoli con lato uniforme');
+  }
   const m = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
   m.onBeforeCompile = sh => {
     sh.vertexShader = sh.vertexShader
