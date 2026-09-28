@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v53';
+const VER = 'v54';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -77,9 +77,19 @@ function loaderShow(){
           const cx2 = t[4] > 0 ? (cr.left - br.left - 3) : (cr.right - br.left + 3);
           const cy2 = cr.top - br.top + cr.height / 2;
           svg.setAttribute('viewBox', '0 0 ' + bw + ' ' + bh);
-          svg.innerHTML = '<line x1="' + cx2 + '" y1="' + cy2 + '" x2="' + ax + '" y2="' + ay +
+          // la linea si ferma PRIMA di Lino e finisce con una punta di
+          // freccia (un po' irregolare) che indica il punto senza coprirlo
+          const dx = ax - cx2, dy = ay - cy2, dl = Math.hypot(dx, dy) || 1;
+          const G = Math.min(30, dl * 0.4);
+          const ux = dx / dl, uy = dy / dl, px = -uy, py = ux;
+          const tx = ax - ux * G, ty = ay - uy * G;          // punta
+          const ex = tx - ux * 9, ey = ty - uy * 9;          // fine linea
+          const p1x = tx - ux * 11.5 + px * 5.2, p1y = ty - uy * 11.5 + py * 5.2;
+          const p2x = tx - ux * 8.5 - px * 4.0, p2y = ty - uy * 8.5 - py * 4.0;
+          svg.innerHTML = '<line x1="' + cx2 + '" y1="' + cy2 + '" x2="' + ex.toFixed(1) + '" y2="' + ey.toFixed(1) +
             '" stroke="#f4951f" stroke-width="2.2" opacity="0.92"/>' +
-            '<circle cx="' + ax + '" cy="' + ay + '" r="3.4" fill="#f4951f"/>';
+            '<polygon points="' + tx.toFixed(1) + ',' + ty.toFixed(1) + ' ' + p1x.toFixed(1) + ',' + p1y.toFixed(1) +
+            ' ' + p2x.toFixed(1) + ',' + p2y.toFixed(1) + '" fill="#f4951f" opacity="0.95"/>';
         });
       };
       show();
