@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v43';
+const VER = 'v44';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
