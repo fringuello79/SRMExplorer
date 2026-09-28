@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v51';
+const VER = 'v52';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -378,6 +378,24 @@ function prepWorld(g){
     if (nm.startsWith('Grif_Meshy')) grifTpl = o;
     if (nm === 'Sevice_Meshy') window._hutS = o;
   });
+  // copia-ombra del nastro: il nastro e' MeshBasicMaterial (non illuminato,
+  // per avere grigio/arancio costanti) e NON puo' ricevere ombre; una copia
+  // della stessa geometria con ShadowMaterial mostra SOLO le ombre sopra.
+  // Aggiunta DOPO il traverse per non farla riprocessare dal loop.
+  if (SHADOWS) {
+    const trails = [];
+    g.traverse(o => { if (o.isMesh && (o.name || '').startsWith('SRM_Trail')) trails.push(o); });
+    for (const t of trails) {
+      const smat = new THREE.ShadowMaterial({ opacity: 0.34 });
+      smat.depthWrite = false;
+      smat.polygonOffset = true; smat.polygonOffsetFactor = -2; smat.polygonOffsetUnits = -2;
+      const catcher = new THREE.Mesh(t.geometry, smat);
+      catcher.name = 'TrailShadowCatcher';
+      catcher.receiveShadow = true; catcher.castShadow = false;
+      catcher.renderOrder = 2;
+      t.add(catcher);
+    }
+  }
   // grifoni in orbita: cloni del modello, parametri dall'export
   if (grifTpl && route.grif) {
     grifTpl.removeFromParent();
