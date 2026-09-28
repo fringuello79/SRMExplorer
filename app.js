@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v45';
+const VER = 'v46';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -248,6 +248,7 @@ async function boot(){
   buildProfile(); buildMinimap(); bindUI();
   const h = location.hash.match(/km=([\d.]+)/);
   if (h) st.s = clamp(parseFloat(h[1]) * 1000, 0, TOT);
+  else st.s = S0_ARCO;
   st.ready = true; prog(1);
   {
     const chiudi = () => { $('loader').style.display = 'none'; if (window._loaderStop) window._loaderStop(); };
@@ -395,7 +396,13 @@ function prepLino(lg){
 }
 
 // ---------- percorso ----------
+const S0_ARCO = -15.0;   // partenza sotto l'arco: 15 m prima del km 0 lungo la tangente iniziale
 function posAt(s, out){
+  if (s < 0) {
+    const dx = route.x[2] - route.x[0], dy = route.y[2] - route.y[0];
+    const L = Math.hypot(dx, dy) || 1;
+    return out.set(route.x[0] + dx / L * s, route.z[0], -(route.y[0] + dy / L * s));
+  }
   const f = clamp(s, 0, TOT) / TOT * (N - 1);
   const i = Math.min(Math.floor(f), N - 2), t = f - i;
   return out.set(lerp(route.x[i], route.x[i + 1], t),
@@ -557,7 +564,7 @@ function buildPins(){
 function updateHUD(){
   if (Math.abs(st.s - st.lastHudS) < 4 && st.sTarget === null) return;
   st.lastHudS = st.s;
-  const km = st.s / 1000;
+  const km = Math.max(0, st.s) / 1000;
   $('v-km').textContent = km.toFixed(1).replace('.', ',');
   $('v-q').innerHTML = Math.round(quotaAt(st.s)) + '<span class="unit"> m</span>';
   const sA = Math.max(st.s - 80, 0), sB = Math.min(st.s + 80, TOT);
@@ -566,7 +573,7 @@ function updateHUD(){
   const pShow = Math.round(st.pend);
   $('v-p').innerHTML = (pShow > 0 ? '+' : '') + pShow + '<span class="unit"> %</span>';
   if (cumDP) {
-    const gi = Math.min(N - 1, Math.round(st.s / TOT * (N - 1)));
+    const gi = Math.min(N - 1, Math.max(0, Math.round(st.s / TOT * (N - 1))));
     $('v-dp').innerHTML = Math.round(cumDP[gi]).toLocaleString('it-IT') + '<span class="unit"> m</span>';
   }
   const gts = route.gates || [];
@@ -674,9 +681,9 @@ function drawProfilePos(){
   if (!profBase) return;
   const x = profCtx, W = profCv.width, H = profCv.height, L = 68, R = 28, T = 22, B = 30;
   x.putImageData(profBase, 0, 0);
-  const i = st.s / TOT * 600;
+  const i = Math.max(0, st.s) / TOT * 600;
   const px = L + (W - L - R) * i / 600;
-  const py = T + (H - T - B) * (1 - (quotaAt(st.s) - 650) / (2500 - 650));
+  const py = T + (H - T - B) * (1 - (quotaAt(Math.max(0, st.s)) - 650) / (2500 - 650));
   x.beginPath(); x.moveTo(px, T); x.lineTo(px, H - B);
   x.strokeStyle = 'rgba(243,239,226,.5)'; x.lineWidth = 2; x.stroke();
   x.beginPath(); x.arc(px, py, 9, 0, 7); x.fillStyle = '#f4951f'; x.fill();
@@ -1175,7 +1182,7 @@ function tick(){
       const vmax = VMAX * (st.hold > 2.2 ? 1.9 : 1);
       st.speed = Math.min(vmax, st.speed + ACC * dt);
     } else { st.hold = 0; st.speed = Math.max(0, st.speed - ACC * 2.4 * dt); }
-    st.s = clamp(st.s + (st.dir || st.lastDir || 1) * st.speed * dt, 0, TOT);
+    st.s = clamp(st.s + (st.dir || st.lastDir || 1) * st.speed * dt, S0_ARCO, TOT);
   }
   // Lino
   posAt(st.s, tmpA); tanAt(st.s, tmpB);
