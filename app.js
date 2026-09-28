@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v40';
+const VER = 'v41';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -227,6 +227,16 @@ async function boot(){
     });
     scene.add(g.scene);
   }, undefined, () => console.warn('borghi assente'));
+  // centro di Magliano curato a mano (magliano_centro.blend -> export_magliano.py)
+  loader.load('assets/maglianoC.glb?' + VER, g => {
+    g.scene.traverse(o => {
+      if (o.isMesh) {
+        o.castShadow = true; o.receiveShadow = true;
+        if (o.material && o.material.isMeshStandardMaterial) { o.material.metalness = 0; o.material.roughness = 0.95; }
+      }
+    });
+    scene.add(g.scene);
+  }, undefined, () => console.warn('maglianoC assente'));
   $('load-step').textContent = 'Lino…';
   const lg = await loadGLB(loader, 'assets/lino.glb?' + VER, p => prog(0.66 + 0.28 * p));
   prepLino(lg);
@@ -993,11 +1003,22 @@ function colorizeTrail(mesh){
       if (d < best) { best = d; bj = j; }
     }
     const km = bj / (N - 1) * route.total_km;
-    // lato del nastro (0/1): segno rispetto alla tangente locale
-    const j0 = Math.min(bj, N - 2);
-    const tx = route.x[j0 + 1] - route.x[j0], tz = -route.y[j0 + 1] + route.y[j0];
-    const rx = x - route.x[j0], rz = z + route.y[j0];
-    aSide[i] = (tx * rz - tz * rx) > 0 ? 1 : 0;
+    // lato del nastro (0/1): segno del prodotto vettore con l'offset PERPENDICOLARE
+    // proiettato sui due segmenti adiacenti (il punto-piu'-vicino da solo e' rumoroso in curva)
+    let sd = 0;
+    for (const j0 of [Math.max(0, bj - 1), Math.min(bj, N - 2)]) {
+      const ax = route.x[j0], az = -route.y[j0];
+      const bx = route.x[j0 + 1], bz = -route.y[j0 + 1];
+      const abx = bx - ax, abz = bz - az;
+      const L2 = abx * abx + abz * abz;
+      if (!L2) continue;
+      const tt = ((x - ax) * abx + (z - az) * abz) / L2;
+      if (tt < -0.25 || tt > 1.25) continue;
+      const tc = clamp(tt, 0, 1);
+      const ox = x - (ax + abx * tc), oz = z - (az + abz * tc);
+      sd += abx * oz - abz * ox;
+    }
+    aSide[i] = sd > 0 ? 1 : 0;
     let ta = 0;
     for (const r of ASF) {
       ta = Math.max(ta, clamp((km - r[0] + 0.06) / 0.1, 0, 1) * clamp((r[1] - km + 0.06) / 0.1, 0, 1));
