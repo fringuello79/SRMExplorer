@@ -1521,7 +1521,7 @@ async function loadVeg(loader){
 const FLY = {
   on: false, pos: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, v: 18,
   inX: 0, inY: 0, flap: false, flapPh: 0, flapPow: 0, stall: false, stallT: 0,
-  vario: 0, lift: 0, agl: 0, tilt: false, tiltBase: null, tiltIn: [0, 0], joyIn: [0, 0], keyIn: [0, 0],
+  vario: 0, lift: 0, agl: 0, pitchV: 0, rollV: 0, tilt: false, tiltBase: null, tiltIn: [0, 0], joyIn: [0, 0], keyIn: [0, 0],
   fogSaved: null, camRoll: 0, ready: false,
   mode: 'volo', tT: 0, fold: 0, flapHold: 0, tumble: null, orbit: 0, legs: 0
 };
@@ -1588,7 +1588,7 @@ function flyStart(){
   else { posAt(st.s, tmpA); FLY.pos.set(tmpA.x, tmpA.y + 70, tmpA.z); }
   posAt(0, tmpA);
   FLY.yaw = Math.atan2(tmpA.x - FLY.pos.x, tmpA.z - FLY.pos.z);
-  FLY.pitch = FC.PITCH_GLIDE; FLY.roll = 0; FLY.v = 22;
+  FLY.pitch = FC.PITCH_GLIDE; FLY.roll = 0; FLY.v = 22; FLY.pitchV = 0; FLY.rollV = 0;
   FLY.stall = false; FLY.flap = false; FLY.flapPow = 0; FLY.vario = 0;
   FLY.mode = 'volo'; FLY.tT = 0; FLY.fold = 0; FLY.flapHold = 0; FLY.tumble = null;
   $('fade').style.opacity = 0; $('impatto').classList.remove('on');
@@ -1654,21 +1654,47 @@ function fwdOf(f, out){
 }
 // ascendenze: termiche sui versanti al sole (esposti a sud-ovest, dove sta il sole della
 // scena) e sopra le creste; svaniscono lontano dal suolo. In m/s verso l'alto.
+// vento dominante da NO (verso SE in coordinate three), piu' forte lontano dal suolo
+const VENTO = { x: 0.62, z: 0.78, v: 6.5 };
+function ventoAt(agl){
+  const k = clamp(0.35 + agl / 320, 0.35, 1);
+  return [VENTO.x * VENTO.v * k, VENTO.z * VENTO.v * k];
+}
+// Ascendenze (m/s verso l'alto) e turbolenza in un punto:
+//  - di pendio: il vento che sale lungo il versante sopravvento (svanisce oltre 260 m dal suolo)
+//  - termiche: colonne dove girano i grifoni in orbita (route.grif) e sui versanti al sole
+//  - sottovento alle creste: aria discendente e turbolenta
+let ASC = { pendio: 0, termica: 0, sole: 0, turb: 0 };
 function ascendenzaAt(x, z, agl){
   const h = 60;
   const g0 = groundAt(x, z);
-  if (g0 < -1e3) return 0;
+  if (g0 < -1e3) { ASC.pendio = ASC.termica = ASC.sole = ASC.turb = 0; return 0; }
   const gx = (groundAt(x + h, z) - groundAt(x - h, z)) / (2 * h);
   const gz = (groundAt(x, z + h) - groundAt(x, z - h)) / (2 * h);
   const slope = Math.hypot(gx, gz);
-  // versante che guarda il sole: gradiente opposto alla direzione del sole
+  // pendio: componente del vento che sale lungo il versante
+  const w = ventoAt(agl);
+  const up = -(gx * w[0] + gz * w[1]);          // >0 sopravvento (l'aria e' spinta in su)
+  const fadeP = clamp(1 - agl / 260, 0, 1);
+  ASC.pendio = clamp(up * 1.3, -2.5, 4.5) * fadeP;
+  ASC.turb = (up < -0.6 ? clamp(-up * 0.5, 0, 1) : 0) * fadeP;
+  // termiche marcate dai grifoni in orbita
+  let term = 0;
+  if (route.grif) for (const g of route.grif) {
+    const d = Math.hypot(g.c[0] - x, -g.c[1] - z);
+    const core = Math.exp(-(d * d) / (190 * 190));
+    const band = clamp(agl / 60, 0, 1) * clamp((1000 - agl) / 400, 0, 1);
+    term = Math.max(term, 3.8 * core * band);
+  }
+  ASC.termica = term;
+  // versanti al sole
   const sunX = SUNDIR.x, sunZ = SUNDIR.z;
   const L = Math.hypot(sunX, sunZ) || 1;
-  const facing = -(gx * sunX + gz * sunZ) / L;      // >0 se il pendio sale verso il sole
+  const facing = -(gx * sunX + gz * sunZ) / L;
   const quota = route.elev_a * g0 + route.elev_b;
-  const term = clamp(facing * 4.0, 0, 1) * clamp(slope * 3.5, 0, 1) * clamp((quota - 1000) / 700, 0.25, 1);
-  const fade = clamp(1 - agl / 380, 0, 1);
-  return 3.2 * term * fade;
+  const sole = clamp(facing * 4.0, 0, 1) * clamp(slope * 3.5, 0, 1) * clamp((quota - 1000) / 700, 0.25, 1);
+  ASC.sole = 2.0 * sole * clamp(1 - agl / 380, 0, 1);
+  return ASC.pendio + Math.max(ASC.termica, ASC.sole);
 }
 function tickFly(dt){
   const f = FLY;
@@ -1691,10 +1717,15 @@ function tickFly(dt){
   let pT = FC.PITCH_GLIDE + (f.inY > 0 ? -f.inY * FC.PITCH_DN * (f.stall ? 0.25 : 1) : -f.inY * FC.PITCH_UP * ctl);
   if (f.stall) pT = Math.min(pT, -0.55);
   if (f.pos.y > FC.CEIL) pT = Math.min(pT, -0.15 - (f.pos.y - FC.CEIL) / 200);
-  f.pitch += (pT - f.pitch) * (1 - Math.exp(-(f.stall ? 2.6 : 2.2) * dt));
+  // beccheggio con inerzia (molla smorzata): risponde, non scatta
+  f.pitchV += ((pT - f.pitch) * (f.stall ? 10 : 8.5) - f.pitchV * 5.2) * dt;
+  f.pitch += f.pitchV * dt;
   // rollio → virata coordinata
   const rT = f.inX * FC.ROLL_MAX * ctl;
-  f.roll += (rT - f.roll) * (1 - Math.exp(-3.2 * dt));
+  f.rollV += ((rT - f.roll) * 13 - f.rollV * 6.2) * dt;
+  // turbolenza sottovento alle creste: scossoni sul rollio
+  if (ASC.turb > 0) f.rollV += (Math.sin(performance.now() / 173) + Math.sin(performance.now() / 61) * 0.5) * ASC.turb * 1.4 * dt;
+  f.roll += f.rollV * dt;
   const yawRate = clamp(FC.G * Math.tan(f.roll) / Math.max(f.v, 10), -1.1, 1.1);
   f.yaw -= yawRate * dt;
   // battito d'ali: ciclo a FLAP_HZ, spinta in avanti + un po' di portanza
@@ -1718,6 +1749,10 @@ function tickFly(dt){
   const drag = FC.CD * f.v * f.v * chiuso * (1 + 1.4 * (1 - Math.cos(f.roll)));
   let dv = -FC.G * Math.sin(f.pitch) - drag + thrust;
   if (f.v < FC.VSTALL + 1 && f.pitch > 0) dv -= 1.5;     // cabrata lenta: il muso perde ancora
+  // richiamare costa energia: piu' e' brusca la cabrata (fattore di carico), piu' si frena
+  if (f.pitchV > 0) dv -= 0.22 * f.pitchV * f.v;
+  // effetto suolo: negli ultimi metri l'aria "porta" un po' di piu'
+  if (f.agl < 12) dv += 0.4 * (1 - f.agl / 12);
   f.v = clamp(f.v + dv * dt, 3, FC.VMAX);
   // stallo
   if (!f.stall && f.v < FC.VSTALL && f.pitch > -0.25) { f.stall = true; f.stallT = 0; }
@@ -1732,6 +1767,10 @@ function tickFly(dt){
   f.agl = gy > -1e3 ? f.pos.y - gy : 500;
   f.lift = ascendenzaAt(f.pos.x, f.pos.z, f.agl);
   f.pos.y += f.lift * dt;
+  if (f.agl < 12) f.pos.y += 0.9 * (1 - f.agl / 12) * dt;      // effetto suolo
+  // deriva col vento (la velocita' e' quella rispetto all'aria)
+  const wv = ventoAt(f.agl);
+  f.pos.x += wv[0] * dt; f.pos.z += wv[1] * dt;
   // suolo: si rimbalza sopra con perdita di velocità
   if (gy > -1e3 && f.pos.y < gy + FC.AGL_MIN) {
     if (f.v > FC.V_IMP || f.pitch < FC.PITCH_IMP) {
@@ -1800,7 +1839,7 @@ function tickFly(dt){
 // ---- a terra: ali chiuse, si riparte battendo le ali (o buttandosi da un pendio) ----
 function atterra(gy){
   const f = FLY;
-  f.mode = 'terra'; f.tT = 0; f.flapHold = 0; f.roll = 0; f.fold = 0;
+  f.mode = 'terra'; f.tT = 0; f.flapHold = 0; f.roll = 0; f.fold = 0; f.pitchV = 0; f.rollV = 0;
   f.pos.y = gy + FC.H_TERRA;
   f.stall = false; $('stallo').classList.remove('on');
   // vetta vicina: scheda della cima
@@ -2030,7 +2069,7 @@ function ripartiDaImpatto(){
   const f = FLY;
   const gt = terraVera(f.impPos.x, f.impPos.z, f.impPos.y);
   f.pos.set(f.impPos.x, (gt > -1e3 ? gt : f.impPos.y) + 230, f.impPos.z);
-  f.yaw = f.impYaw; f.pitch = FC.PITCH_GLIDE; f.roll = 0; f.v = 20;
+  f.yaw = f.impYaw; f.pitch = FC.PITCH_GLIDE; f.roll = 0; f.v = 20; f.pitchV = 0; f.rollV = 0;
   f.stall = false; f.flap = false; f.flapPow = 0; f.vario = 0; f.fold = 0; f.tumble = null;
   f.mode = 'volo'; f.tT = 0;
   grifP.rotation.set(0, 0, 0);
@@ -2083,8 +2122,12 @@ function updateHUDFly(){
     $('zona-s').textContent = Math.round(best) + ' m in pianta · vetta ' + bp.e + ' m';
   } else {
     $('zona-n').textContent = f.fold > 0.6 ? 'A proiettile · ali chiuse' : 'Grifone del Velino';
-    $('zona-s').textContent = 'suolo a ' + Math.round(route.elev_a * f.agl) + ' m sotto di te' +
-      (f.lift > 0.6 ? ' · ascendenza' : '');
+    let asc = '';
+    if (ASC.termica > 0.8 && ASC.termica >= ASC.sole) asc = ' · termica';
+    else if (ASC.pendio > 0.8) asc = ' · ascendenza di pendio';
+    else if (ASC.sole > 0.8) asc = ' · versante al sole';
+    else if (ASC.turb > 0.3) asc = ' · turbolenza sottovento';
+    $('zona-s').textContent = 'suolo a ' + Math.round(route.elev_a * f.agl) + ' m sotto di te' + asc;
   }
   const vb = $('vario');
   if (vb) {
