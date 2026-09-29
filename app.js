@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v59';
+const VER = 'v60';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -773,6 +773,16 @@ function drawMiniPos(){
   const pi = Math.round(st.s / TOT * (N - 1)), p = miniXY(Math.min(pi, N - 1));
   x.beginPath(); x.arc(p[0], p[1], 9, 0, 7); x.fillStyle = '#f4951f'; x.fill();
   x.lineWidth = 3; x.strokeStyle = '#fff'; x.stroke();
+  if (FLY.on) {
+    // il grifone: freccia orientata come la prua
+    const m = miniPath, S = miniCv.width - m.pad * 2;
+    const gx = m.pad + (FLY.pos.x - m.x0) / m.span * S;
+    const gz = miniCv.height - m.pad - (-FLY.pos.z - m.y0) / m.span * S;
+    x.save(); x.translate(gx, gz); x.rotate(Math.atan2(Math.sin(FLY.yaw), -Math.cos(FLY.yaw)) + Math.PI / 2);
+    x.beginPath(); x.moveTo(0, -13); x.lineTo(9, 10); x.lineTo(0, 5); x.lineTo(-9, 10); x.closePath();
+    x.fillStyle = '#f3efe2'; x.fill(); x.lineWidth = 2; x.strokeStyle = '#0c1f14'; x.stroke();
+    x.restore();
+  }
 }
 
 // ---------- UI ----------
@@ -798,9 +808,22 @@ function bindUI(){
   const bp = $('b-pov'); if (bp) bp.onclick = () => setView(st.view === 'fpv' ? 'follow' : 'fpv');
   $('b-help').onclick = showHelp;
   $('b-gara').onclick = showGara;
+  $('b-grif').onclick = () => { if (FLY.on) flyStop(); else flyStart(); };
   $('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   const key = (e, down) => {
     const k = e.key;
+    if (FLY.on) {
+      if (k === 'Escape' && down) { closeModal(); flyStop(); return; }
+      const K = st.keys;
+      const map = { ArrowLeft: 'L', a: 'L', A: 'L', ArrowRight: 'R', d: 'R', D: 'R',
+                    ArrowUp: 'U', w: 'U', W: 'U', ArrowDown: 'D', s: 'D', S: 'D', ' ': 'F' };
+      const c = map[k];
+      if (c) { down ? K.add(c) : K.delete(c); e.preventDefault(); }
+      FLY.keyIn = [(K.has('R') ? 1 : 0) - (K.has('L') ? 1 : 0), (K.has('U') ? 1 : 0) - (K.has('D') ? 1 : 0)];
+      FLY.flap = K.has('F');
+      $('b-flap').classList.toggle('on', FLY.flap);
+      return;
+    }
     if (k === 'ArrowRight' || k === 'd' || k === 'D') { down ? st.keys.add('R') : st.keys.delete('R'); e.preventDefault(); }
     else if (k === 'ArrowLeft' || k === 'a' || k === 'A') { down ? st.keys.add('L') : st.keys.delete('L'); e.preventDefault(); }
     else if (k === 'Escape' && down) closeModal();
@@ -827,7 +850,12 @@ function showHelp(){
     '<li><b>SEGUI LINO</b> riaggancia la telecamera dietro di lui.</li>' +
     '<li>Il <b>profilo altimetrico</b> in basso è cliccabile: tocca un punto e Lino si posizioner\u00e0 su di esso.</li>' +
     '<li>Tocca i <b>segnaposto</b> lungo il percorso per le schede dei punti di interesse.</li>' +
-    '<li>La barra in alto dice sempre <b>dove sei</b>: zona, km, quota e numero del sentiero.</li></ul>');
+    '<li>La barra in alto dice sempre <b>dove sei</b>: zona, km, quota e numero del sentiero.</li>' +
+    '<li><b>GRIFONE</b>: voli libero sopra il Velino. Il grifone plana e perde quota da solo; ' +
+    '<b>▲</b> picchia, <b>▼</b> cabra, <b>◀ ▶</b> vira, <b>SPAZIO</b> (o il pulsante) batte le ali per salire. ' +
+    'Sul telefono usi il joystick e puoi scegliere di guidarlo <b>inclinando il telefono</b>. ' +
+    'Se cabri troppo senza battere le ali va in <b>stallo</b>: picchia per riprendere velocità. ' +
+    'Cerca i versanti al sole: le <b>ascendenze</b> ti portano su senza fatica, come fanno i grifoni veri.</li></ul>');
 }
 function showGara(){
   let g = '<h2>Skyrace del Maglio 2026</h2><h3>' + route.race_date + ' · start ore ' + route.start_time + ' · Magliano de\u2019 Marsi</h3>' +
@@ -1243,10 +1271,342 @@ async function loadVeg(loader){
   console.log('vegetazione:', Object.keys(veg.inst).map(k => k + ':' + veg.inst[k].length).join(', '));
 }
 
+// ---------- modalità GRIFONE: volo libero sopra il Velino ----------
+// Modello di volo arcade in unità di scena (~metri): planata con perdita di quota
+// costante, picchiata/cabrata scambiano quota e velocità, virata coordinata dal
+// rollio, battito d'ali come riserva di spinta, stallo sotto VSTALL.
+const FLY = {
+  on: false, pos: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, v: 18,
+  inX: 0, inY: 0, flap: false, flapPh: 0, flapPow: 0, stall: false, stallT: 0,
+  vario: 0, lift: 0, agl: 0, tilt: false, tiltBase: null, tiltIn: [0, 0], joyIn: [0, 0], keyIn: [0, 0],
+  fogSaved: null, camRoll: 0, ready: false
+};
+const FC = {
+  G: 9.81, VSTALL: 9.5, VMAX: 46, CD: 0.0036, PITCH_GLIDE: -0.105,   // -6°: pendenza di planata naturale
+  PITCH_UP: 0.50, PITCH_DN: 0.72, ROLL_MAX: 1.05, FLAP_HZ: 2.1, FLAP_ACC: 13.5, FLAP_LIFT: 5.5,
+  CEIL: 2950, AGL_MIN: 9,
+  // confine morbido: ellisse centrata sul terreno (coordinate three: x, z)
+  BC: [-636, 970], BR: [4250, 5050]
+};
+let grifP = null, grifMat = null;
+const fwdV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), rightV = new THREE.Vector3();
+const gEul = new THREE.Euler(0, 0, 0, 'YXZ');
+let skirt = null;
+const isTouch = () => matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window;
+
+function buildGrifone(){
+  if (grifP || !grifTpl) return;
+  grifP = new THREE.Group(); grifP.name = 'GrifonePilota';
+  const m = grifTpl.clone();
+  m.geometry = grifTpl.geometry;
+  grifMat = grifTpl.material.clone();
+  grifMat.metalness = 0; grifMat.roughness = 0.9;
+  // battito d'ali procedurale: le ali (|x| oltre la radice) ruotano attorno all'asse
+  // longitudinale del corpo, con le punte che flettono di più della radice
+  grifMat.onBeforeCompile = sh => {
+    sh.uniforms.uFlap = { value: 0 };
+    grifMat.userData.sh = sh;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uFlap;\nvec3 alaPos(vec3 p, float a){\n  float ax = abs(p.x); float rad = 0.12;\n  if (ax <= rad) return p;\n  float w = clamp((ax - rad) / 0.83, 0.0, 1.0);\n  float ang = a * (0.55 + 0.45 * w);\n  float dx = ax - rad;\n  return vec3(sign(p.x) * (rad + dx * cos(ang)), p.y + dx * sin(ang), p.z);\n}')
+      .replace('#include <begin_vertex>', 'vec3 transformed = alaPos(vec3(position), uFlap);')
+      .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\n{ float ax = abs(position.x); if (ax > 0.12) { float w = clamp((ax - 0.12) / 0.83, 0.0, 1.0); float ang = uFlap * (0.55 + 0.45 * w) * sign(position.x);\n  float c = cos(ang), s = sin(ang); objectNormal = vec3(objectNormal.x * c - objectNormal.y * s, objectNormal.x * s + objectNormal.y * c, objectNormal.z); } }');
+  };
+  m.material = grifMat;
+  m.position.set(0, 0, 0); m.rotation.set(0, 0, 0); m.scale.setScalar(grifTpl.scale.x || 6.84);
+  m.rotation.y = GRIF_MESH_YAW;
+  m.castShadow = true; m.frustumCulled = false;
+  grifP.add(m);
+  grifP.visible = false;
+  scene.add(grifP);
+  // "gonna" del mondo: disco color foschia sotto e oltre il bordo del terreno,
+  // così il limite della mappa sfuma nella nebbia invece di mostrare un orlo
+  const sk = new THREE.Mesh(new THREE.CircleGeometry(60000, 48),
+    new THREE.MeshBasicMaterial({ color: 0xc9d6dc, fog: true }));
+  sk.rotation.x = -Math.PI / 2; sk.position.set(FC.BC[0], -46, FC.BC[1]);
+  sk.name = 'Skirt'; sk.visible = false; skirt = sk;
+  scene.add(sk);
+}
+const GRIF_MESH_YAW = 0;   // orientamento del modello Meshy rispetto alla prua (+z del gruppo)
+
+function flyStart(){
+  if (!grifTpl) { openCard('<h2>Grifone assente</h2><p>Il modello del grifone non è nella scena.</p>'); return; }
+  buildGrifone();
+  // si parte da sopra Lino, nella direzione del sentiero, già in planata
+  posAt(st.s, tmpA); tanAt(st.s, tmpB);
+  const gy = groundAt(tmpA.x, tmpA.z);
+  FLY.pos.set(tmpA.x, Math.max(tmpA.y, gy) + 70, tmpA.z);
+  FLY.yaw = Math.atan2(tmpB.x, tmpB.z);
+  FLY.pitch = FC.PITCH_GLIDE; FLY.roll = 0; FLY.v = 20;
+  FLY.stall = false; FLY.flap = false; FLY.flapPow = 0; FLY.vario = 0;
+  FLY.on = true; grifP.visible = true; skirt.visible = true;
+  FLY.fogSaved = [scene.fog.near, scene.fog.far];
+  scene.fog.near = 700; scene.fog.far = degraded ? 3800 : 4600;
+  document.body.classList.add('grif');
+  document.body.classList.toggle('touch', isTouch());
+  controls.enabled = false;
+  $('b-grif').classList.add('on'); $('b-grif').textContent = 'TORNA A LINO';
+  const lab = document.querySelectorAll('#bar .slot .lab');
+  lab[0].textContent = 'In volo'; lab[1].textContent = 'Velocità'; lab[3].textContent = 'Vario';
+  $('zona-n').textContent = 'Grifone del Velino'; $('zona-s').textContent = '';
+  st.curZone = -1; st.curKey = null; st.lastHudS = -1e9;
+  $('poi-banner').classList.remove('on'); st.curPoi = -1;
+  // la camera parte dietro al grifone
+  fwdOf(FLY, fwdV);
+  camera.position.copy(FLY.pos).addScaledVector(fwdV, -40); camera.position.y += 14;
+  camTgt.copy(FLY.pos);
+  if (!FLY.ready) { FLY.ready = true; bindFlyUI(); }
+  if (window.SRMX) { window.SRMX.fly = FLY; window.SRMX.flyStop = flyStop; window.SRMX.grifP = grifP; }
+  try { location.hash = 'grifone'; } catch (e) {}
+}
+function flyStop(){
+  if (!FLY.on) return;
+  FLY.on = false; grifP.visible = false; skirt.visible = false;
+  if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = FLY.fogSaved[1]; }
+  document.body.classList.remove('grif');
+  $('b-grif').classList.remove('on'); $('b-grif').textContent = 'GRIFONE';
+  $('stallo').classList.remove('on');
+  const lab = document.querySelectorAll('#bar .slot .lab');
+  lab[0].textContent = 'Zona'; lab[1].textContent = 'Km'; lab[3].textContent = 'Pendenza';
+  st.curZone = -1; st.curKey = null; st.lastHudS = -1e9; st.curPoi = -1;
+  tiltOff();
+  setView('follow');
+  try { history.replaceState(null, '', location.pathname); } catch (e) {}
+}
+function fwdOf(f, out){
+  const cp = Math.cos(f.pitch);
+  return out.set(cp * Math.sin(f.yaw), Math.sin(f.pitch), cp * Math.cos(f.yaw));
+}
+// ascendenze: termiche sui versanti al sole (esposti a sud-ovest, dove sta il sole della
+// scena) e sopra le creste; svaniscono lontano dal suolo. In m/s verso l'alto.
+function ascendenzaAt(x, z, agl){
+  const h = 60;
+  const g0 = groundAt(x, z);
+  if (g0 < -1e3) return 0;
+  const gx = (groundAt(x + h, z) - groundAt(x - h, z)) / (2 * h);
+  const gz = (groundAt(x, z + h) - groundAt(x, z - h)) / (2 * h);
+  const slope = Math.hypot(gx, gz);
+  // versante che guarda il sole: gradiente opposto alla direzione del sole
+  const sunX = SUNDIR.x, sunZ = SUNDIR.z;
+  const L = Math.hypot(sunX, sunZ) || 1;
+  const facing = -(gx * sunX + gz * sunZ) / L;      // >0 se il pendio sale verso il sole
+  const quota = route.elev_a * g0 + route.elev_b;
+  const term = clamp(facing * 4.0, 0, 1) * clamp(slope * 3.5, 0, 1) * clamp((quota - 1000) / 700, 0.25, 1);
+  const fade = clamp(1 - agl / 380, 0, 1);
+  return 3.2 * term * fade;
+}
+function tickFly(dt){
+  const f = FLY;
+  // ingressi: tastiera + joystick + inclinazione (il più forte vince)
+  const pick = (a, b, c) => Math.abs(a) >= Math.abs(b) ? (Math.abs(a) >= Math.abs(c) ? a : c) : (Math.abs(b) >= Math.abs(c) ? b : c);
+  f.inX = clamp(pick(f.keyIn[0], f.joyIn[0], f.tiltIn[0]), -1, 1);
+  f.inY = clamp(pick(f.keyIn[1], f.joyIn[1], f.tiltIn[1]), -1, 1);   // +1 = picchiata
+  const ctl = f.stall ? 0.25 : 1;
+  // beccheggio: la planata naturale è leggermente a scendere; in stallo il muso cade
+  let pT = FC.PITCH_GLIDE + (f.inY > 0 ? -f.inY * FC.PITCH_DN : -f.inY * FC.PITCH_UP) * ctl;
+  if (f.stall) pT = Math.min(pT, -0.55);
+  if (f.pos.y > FC.CEIL) pT = Math.min(pT, -0.15 - (f.pos.y - FC.CEIL) / 200);
+  f.pitch += (pT - f.pitch) * (1 - Math.exp(-(f.stall ? 2.6 : 2.2) * dt));
+  // rollio → virata coordinata
+  const rT = f.inX * FC.ROLL_MAX * ctl;
+  f.roll += (rT - f.roll) * (1 - Math.exp(-3.2 * dt));
+  const yawRate = clamp(FC.G * Math.tan(f.roll) / Math.max(f.v, 10), -1.1, 1.1);
+  f.yaw -= yawRate * dt;
+  // battito d'ali: ciclo a FLAP_HZ, spinta in avanti + un po' di portanza
+  if (f.flap && f.pos.y < FC.CEIL) {
+    f.flapPh += dt * FC.FLAP_HZ * Math.PI * 2;
+    f.flapPow += (1 - f.flapPow) * (1 - Math.exp(-6 * dt));
+  } else {
+    // completa il ciclo e torna in planata, senza scatti
+    if (f.flapPh % (Math.PI * 2) > 0.05) f.flapPh += dt * FC.FLAP_HZ * Math.PI * 2 * 0.8;
+    f.flapPow += (0 - f.flapPow) * (1 - Math.exp(-4 * dt));
+  }
+  const beat = Math.max(0, Math.sin(f.flapPh));
+  const thrust = FC.FLAP_ACC * beat * f.flapPow;
+  // bilancio di velocità lungo la prua
+  const drag = FC.CD * f.v * f.v * (1 + 1.4 * (1 - Math.cos(f.roll)));
+  let dv = -FC.G * Math.sin(f.pitch) - drag + thrust;
+  if (f.v < FC.VSTALL + 1 && f.pitch > 0) dv -= 1.5;     // cabrata lenta: il muso perde ancora
+  f.v = clamp(f.v + dv * dt, 3, FC.VMAX);
+  // stallo
+  if (!f.stall && f.v < FC.VSTALL && f.pitch > -0.25) { f.stall = true; f.stallT = 0; }
+  if (f.stall) { f.stallT += dt; if (f.v > FC.VSTALL + 3 && f.stallT > 0.8) f.stall = false; }
+  // moto
+  fwdOf(f, fwdV);
+  const yPrev = f.pos.y;
+  f.pos.addScaledVector(fwdV, f.v * dt);
+  if (f.stall) f.pos.y -= (FC.VSTALL + 2 - f.v) * 2.2 * dt;
+  f.pos.y += FC.FLAP_LIFT * beat * f.flapPow * dt;
+  const gy = groundAt(f.pos.x, f.pos.z);
+  f.agl = gy > -1e3 ? f.pos.y - gy : 500;
+  f.lift = ascendenzaAt(f.pos.x, f.pos.z, f.agl);
+  f.pos.y += f.lift * dt;
+  // suolo: si rimbalza sopra con perdita di velocità
+  if (gy > -1e3 && f.pos.y < gy + FC.AGL_MIN) {
+    f.pos.y = gy + FC.AGL_MIN;
+    f.v = Math.max(f.v * 0.985, 8);
+    if (f.pitch < 0) f.pitch *= 0.6;
+    f.agl = FC.AGL_MIN;
+  }
+  // confine morbido: oltre l'ellisse la prua viene riportata dolcemente al centro
+  const ex = (f.pos.x - FC.BC[0]) / FC.BR[0], ez = (f.pos.z - FC.BC[1]) / FC.BR[1];
+  const er = Math.hypot(ex, ez);
+  if (er > 0.82) {
+    const k = clamp((er - 0.82) / 0.18, 0, 1);
+    const yawHome = Math.atan2(FC.BC[0] - f.pos.x, FC.BC[1] - f.pos.z);
+    let d = yawHome - f.yaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+    f.yaw += d * k * 1.6 * dt;
+    if (er > 1.0) { f.pos.x = FC.BC[0] + ex / er * FC.BR[0]; f.pos.z = FC.BC[1] + ez / er * FC.BR[1]; }
+  }
+  f.vario += ((f.pos.y - yPrev) / Math.max(dt, 1e-3) - f.vario) * (1 - Math.exp(-3 * dt));
+  // posa del grifone: leggera oscillazione in planata, ali che seguono il battito
+  gEul.set(-f.pitch, f.yaw, f.roll, 'YXZ');
+  grifP.quaternion.setFromEuler(gEul);
+  grifP.position.copy(f.pos);
+  if (grifMat && grifMat.userData.sh) {
+    const idle = Math.sin(performance.now() / 900) * 0.06 + 0.10;    // ali leggermente a diedro
+    const fl = Math.sin(f.flapPh) * 0.85 * f.flapPow;
+    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.flapPow) + fl;
+  }
+  // camera d'inseguimento
+  const back = 34 + f.v * 0.35;
+  tmpD.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
+  tmpB.copy(f.pos).addScaledVector(tmpD, -back);
+  tmpB.y += 12 - f.pitch * 10;
+  const cg = groundAt(tmpB.x, tmpB.z);
+  if (cg > -1e3 && tmpB.y < cg + 6) tmpB.y = cg + 6;
+  camera.position.lerp(tmpB, 1 - Math.exp(-5 * dt));
+  tmpC.copy(f.pos).addScaledVector(fwdV, 30);
+  camTgt.lerp(tmpC, 1 - Math.exp(-7 * dt));
+  f.camRoll += (f.roll * 0.28 - f.camRoll) * (1 - Math.exp(-3 * dt));
+  upV.set(Math.sin(f.camRoll), Math.cos(f.camRoll), 0);
+  camera.up.copy(upV);
+  camera.lookAt(camTgt);
+  camera.up.set(0, 1, 0);
+  if (SHADOWS && sunLight) {
+    sunLight.position.set(f.pos.x + SUNDIR.x * 2300, f.pos.y + SUNDIR.y * 2300, f.pos.z + SUNDIR.z * 2300);
+    sunLight.target.position.copy(f.pos);
+    sunLight.target.updateMatrixWorld();
+  }
+  $('stallo').classList.toggle('on', f.stall);
+  updateHUDFly();
+}
+let hudFlyT = 0;
+function updateHUDFly(){
+  const f = FLY;
+  hudFlyT += 1;
+  if (hudFlyT % 6) { drawMiniPos(); return; }
+  const kmh = Math.round(f.v * 3.6);
+  $('v-km').textContent = kmh;
+  $('v-q').innerHTML = Math.round(route.elev_a * f.pos.y + route.elev_b) + '<span class="unit"> m</span>';
+  const vr = (route.elev_a * f.vario);
+  $('v-p').innerHTML = (vr > 0 ? '+' : '') + vr.toFixed(1).replace('.', ',') + '<span class="unit"> m/s</span>';
+  // vetta più vicina (in pianta) entro 1,5 km, altrimenti quota del suolo
+  let best = 1e9, bp = null;
+  for (const p of route.peaks) {
+    const d = Math.hypot(p.x - f.pos.x, -p.y - f.pos.z);
+    if (d < best) { best = d; bp = p; }
+  }
+  if (bp && best < 1500) {
+    $('zona-n').textContent = bp.n;
+    $('zona-s').textContent = Math.round(best) + ' m in pianta · vetta ' + bp.e + ' m';
+  } else {
+    $('zona-n').textContent = 'Grifone del Velino';
+    $('zona-s').textContent = 'suolo a ' + Math.round(route.elev_a * f.agl) + ' m sotto di te' +
+      (f.lift > 0.6 ? ' · ascendenza' : '');
+  }
+  const vb = $('vario');
+  if (vb) {
+    const i = vb.firstElementChild, h = clamp(vr / 6, -1, 1) * 50;
+    i.style.top = (h > 0 ? 50 - h : 50) + '%'; i.style.height = Math.abs(h) + '%';
+    i.style.background = vr > 0.3 ? '#f4951f' : (vr < -3 ? '#c8102e' : '#8d99a6');
+  }
+  drawMiniPos();
+}
+function bindFlyUI(){
+  // joystick virtuale
+  const joy = $('joy'), knob = $('joy-k');
+  let jid = null;
+  const R = () => joy.clientWidth / 2;
+  const set = e => {
+    const r = joy.getBoundingClientRect();
+    let dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    const m = Math.hypot(dx, dy), rm = R() - 24;
+    if (m > rm) { dx *= rm / m; dy *= rm / m; }
+    knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    // zona morta al centro, curva morbida
+    const cv = v => { const a = Math.abs(v); return a < 0.1 ? 0 : Math.sign(v) * Math.pow((a - 0.1) / 0.9, 1.4); };
+    FLY.joyIn = [cv(dx / rm), cv(-dy / rm)];
+  };
+  joy.addEventListener('pointerdown', e => { jid = e.pointerId; joy.setPointerCapture(jid); set(e); e.preventDefault(); });
+  joy.addEventListener('pointermove', e => { if (e.pointerId === jid) set(e); });
+  const rel = e => { if (e.pointerId !== jid) return; jid = null; FLY.joyIn = [0, 0]; knob.style.transform = ''; };
+  joy.addEventListener('pointerup', rel); joy.addEventListener('pointercancel', rel);
+  // pulsante battito
+  const bf = $('b-flap');
+  const on = e => { e.preventDefault(); FLY.flap = true; bf.classList.add('on'); };
+  const off = () => { FLY.flap = false; bf.classList.remove('on'); };
+  bf.addEventListener('pointerdown', on);
+  bf.addEventListener('pointerup', off); bf.addEventListener('pointercancel', off); bf.addEventListener('pointerleave', off);
+  // inclinazione del telefono
+  $('b-tilt').onclick = () => { if (FLY.tilt) tiltOff(); else tiltOn(); };
+}
+function onTilt(e){
+  if (!FLY.on || !FLY.tilt) return;
+  let b = e.beta, g = e.gamma;
+  if (b === null || g === null) return;
+  // in orizzontale (telefono girato) gli assi si scambiano
+  const ang = (screen.orientation && screen.orientation.angle) || window.orientation || 0;
+  let fb, lr;
+  if (ang === 90) { fb = -g; lr = b; } else if (ang === -90 || ang === 270) { fb = g; lr = -b; } else { fb = b; lr = g; }
+  if (!FLY.tiltBase) { FLY.tiltBase = [fb, lr]; return; }
+  const dy = FLY.tiltBase[0] - fb, dx = lr - FLY.tiltBase[1];   // in avanti = picchiata
+  const cv = v => { const a = Math.abs(v); return a < 3 ? 0 : Math.sign(v) * Math.min(1, (a - 3) / 22); };
+  FLY.tiltIn = [cv(dx), cv(dy)];
+}
+async function tiltOn(){
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const r = await DeviceOrientationEvent.requestPermission();
+      if (r !== 'granted') return;
+    }
+  } catch (e) { return; }
+  FLY.tilt = true; FLY.tiltBase = null; FLY.tiltIn = [0, 0];
+  $('b-tilt').classList.add('on'); $('b-tilt').textContent = 'TIENI IL TELEFONO COSÌ';
+  $('joy').style.opacity = '0.35';
+  addEventListener('deviceorientation', onTilt);
+  setTimeout(() => { if (FLY.tilt) $('b-tilt').textContent = 'INCLINAZIONE ATTIVA'; }, 1800);
+}
+function tiltOff(){
+  if (!FLY.tilt) return;
+  FLY.tilt = false; FLY.tiltIn = [0, 0]; FLY.tiltBase = null;
+  removeEventListener('deviceorientation', onTilt);
+  $('b-tilt').classList.remove('on'); $('b-tilt').textContent = 'INCLINA IL TELEFONO';
+  $('joy').style.opacity = '';
+}
+
 // ---------- ciclo ----------
 let fpsAcc = 0, fpsN = 0, fpsT = 0, degraded = false;
 function tick(){
   const dt = Math.min(clock.getDelta(), 0.05);
+  if (FLY.on) {
+    tickFly(dt);
+    if (mixer) mixer.update(0);
+    const tNow0 = performance.now() / 1000;
+    for (const m of grifs) {
+      const g = m.userData.g;
+      const ph = g.ph0 + g.rate * tNow0;
+      m.position.set(g.c[0] + g.r * Math.cos(ph), g.c[2] + Math.sin(tNow0 * 0.6 + g.ph0) * 4, -(g.c[1] + g.r * Math.sin(ph)));
+      m.rotation.y = ph + Math.PI / 2 + Math.PI;
+    }
+    tickPeaks(dt);
+    renderer.render(scene, camera);
+    fpsAcc += dt; fpsN++; fpsT += dt;
+    if (fpsT > 4 && !degraded) {
+      if (fpsN / fpsT < 26) { degraded = true; renderer.setPixelRatio(1); scene.fog.far = 3800; }
+      fpsN = 0; fpsT = 0;
+    }
+    return;
+  }
   // movimento
   if (st.sTarget !== null) {
     const d = st.sTarget - st.s;
@@ -1312,6 +1672,17 @@ function tick(){
     m.position.set(g.c[0] + g.r * Math.cos(ph), g.c[2] + Math.sin(tNow * 0.6 + g.ph0) * 4, -(g.c[1] + g.r * Math.sin(ph)));
     m.rotation.y = ph + Math.PI / 2 + Math.PI;
   }
+  tickPeaks(dt);
+  updateHUD();
+  renderer.render(scene, camera);
+  // guardia prestazioni
+  fpsAcc += dt; fpsN++; fpsT += dt;
+  if (fpsT > 4 && !degraded) {
+    if (fpsN / fpsT < 26) { degraded = true; renderer.setPixelRatio(1); scene.fog.far = FLY.on ? 3800 : 12000; }
+    fpsN = 0; fpsT = 0;
+  }
+}
+function tickPeaks(dt){
   peakT += dt;
   if (peakItems.length && peakT > 0.15) {
     peakT = 0;
@@ -1326,13 +1697,5 @@ function tick(){
       g.userData.lbl.scale.set(hh * (g.userData.lbl.userData.aspect || 5.33), hh, 1);
       g.userData.flag.rotation.y = Math.sin(performance.now() / 1400 + g.position.x) * 0.7;
     }
-  }
-  updateHUD();
-  renderer.render(scene, camera);
-  // guardia prestazioni
-  fpsAcc += dt; fpsN++; fpsT += dt;
-  if (fpsT > 4 && !degraded) {
-    if (fpsN / fpsT < 26) { degraded = true; renderer.setPixelRatio(1); scene.fog.far = 12000; }
-    fpsN = 0; fpsT = 0;
   }
 }
