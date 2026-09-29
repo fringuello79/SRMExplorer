@@ -254,6 +254,7 @@ async function boot(){
   buildPins();
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
+  try { buildNuvole(); } catch (e) { console.warn('nuvole:', e); }
   try { await document.fonts.load('400 72px Anton'); } catch (e) {}
   buildPeaks();
   buildProfile(); buildMinimap(); bindUI();
@@ -362,7 +363,7 @@ function prepWorld(g){
     } else if (nm === 'Forest' || nm.startsWith('Forest')) {
       o.visible = false;
     } else if (nm.startsWith('Clouds')) {
-      o.material = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.92 });
+      o.visible = false;   // le nuvole piatte dell'export sono sostituite dai cumuli a billboard (buildNuvole)
     } else if (o.material && o.material.isMeshStandardMaterial) {
       o.material.metalness = 0; o.material.roughness = 0.9;
     }
@@ -553,6 +554,77 @@ function buildDataSassi(){
   scene.add(im);
 }
 
+// ---------- cumuli a billboard, con deriva lenta e ombra sul terreno ----------
+const NNUBI = 14;
+const NUBI_U = [];
+for (let i = 0; i < NNUBI; i++) NUBI_U.push(new THREE.Vector3(1e6, 1e6, 1));
+let TERR_SH = null, NUVOLE = [];
+function nuvolaTex(seed){
+  const c = document.createElement('canvas'); c.width = 256; c.height = 160;
+  const x = c.getContext('2d');
+  let sd = seed;
+  const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  x.clearRect(0, 0, 256, 160);
+  // base piatta e grigia sotto, batuffoli bianchi sopra
+  const blobs = 9 + Math.floor(rnd() * 5);
+  for (let i = 0; i < blobs; i++) {
+    const bx = 40 + rnd() * 176, by = 70 + rnd() * 50, r = 26 + rnd() * 34;
+    const g = x.createRadialGradient(bx, by - r * 0.25, r * 0.1, bx, by, r);
+    const lum = 0.86 + 0.14 * (1 - (by - 60) / 70);
+    g.addColorStop(0, 'rgba(255,255,255,' + (0.95 * lum).toFixed(2) + ')');
+    g.addColorStop(0.55, 'rgba(' + [245, 247, 250].map(v => Math.round(v * lum)).join(',') + ',0.72)');
+    g.addColorStop(1, 'rgba(225,230,238,0)');
+    x.fillStyle = g; x.beginPath(); x.arc(bx, by, r, 0, 7); x.fill();
+  }
+  // base leggermente ombreggiata
+  const gb = x.createLinearGradient(0, 95, 0, 150);
+  gb.addColorStop(0, 'rgba(190,200,215,0)'); gb.addColorStop(1, 'rgba(170,180,200,0.35)');
+  x.globalCompositeOperation = 'source-atop'; x.fillStyle = gb; x.fillRect(0, 90, 256, 70);
+  x.globalCompositeOperation = 'source-over';
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+}
+function buildNuvole(){
+  const grp = new THREE.Group(); grp.name = 'Nuvole';
+  const texs = [nuvolaTex(11), nuvolaTex(29), nuvolaTex(47)];
+  let sd = 20261018;
+  const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+  for (let i = 0; i < NNUBI; i++) {
+    // sparse sull'ellisse del mondo, sopra le vette (y scena 2300-2900 = 2780-3320 m reali)
+    const ang = rnd() * Math.PI * 2, rr = 0.25 + 0.7 * Math.sqrt(rnd());
+    const cx = FC.BC[0] + Math.cos(ang) * FC.BR[0] * rr, cz = FC.BC[1] + Math.sin(ang) * FC.BR[1] * rr;
+    const cy = 2650 + rnd() * 550;
+    const W = 360 + rnd() * 420;
+    const nube = new THREE.Group();
+    for (let k = 0; k < 3; k++) {
+      const m = new THREE.SpriteMaterial({ map: texs[(i + k) % 3], transparent: true, depthWrite: false, fog: true, opacity: 0.92 });
+      const sp = new THREE.Sprite(m);
+      const w = W * (0.55 + rnd() * 0.5);
+      sp.scale.set(w, w * 0.62, 1);
+      sp.position.set((rnd() - 0.5) * W * 0.7, (rnd() - 0.5) * 40 + k * 18, (rnd() - 0.5) * W * 0.5);
+      nube.add(sp);
+    }
+    nube.position.set(cx, cy, cz);
+    nube.userData = { w: W, v: 1.6 + rnd() * 1.4 };
+    grp.add(nube); NUVOLE.push(nube);
+    NUBI_U[i].set(cx, cz, W * 0.55);
+  }
+  scene.add(grp);
+}
+function tickNuvole(dt){
+  // deriva da NO verso SE (vento dominante), rientro dall'altro lato dell'ellisse
+  for (let i = 0; i < NUVOLE.length; i++) {
+    const n = NUVOLE[i];
+    n.position.x += n.userData.v * 0.62 * dt; n.position.z += n.userData.v * 0.78 * dt;
+    const ex = (n.position.x - FC.BC[0]) / FC.BR[0], ez = (n.position.z - FC.BC[1]) / FC.BR[1];
+    if (ex * ex + ez * ez > 0.95) { n.position.x -= ex * FC.BR[0] * 1.9; n.position.z -= ez * FC.BR[1] * 1.9; }
+    NUBI_U[i].set(n.position.x, n.position.z, n.userData.w * 0.55);
+    // dentro o troppo vicino a una nuvola: si dissolve (niente lastre tagliate dal piano vicino)
+    const dc = n.position.distanceTo(camera.position);
+    const op = 0.92 * clamp((dc - n.userData.w * 0.7) / (n.userData.w * 0.8), 0, 1);
+    for (const sp of n.children) sp.material.opacity = op;
+  }
+}
 function buildNubiBasse(){
   const g = new THREE.Group(); g.name = 'NubiBasse';
   const geo = new THREE.SphereGeometry(1, 10, 8);
@@ -964,11 +1036,13 @@ function colorizeTerrain(mesh){
     matT.onBeforeCompile = sh => {
       sh.uniforms.uDet = { value: detailTex() };
       sh.uniforms.uTinta = { value: tintaTex() };
+      sh.uniforms.uNubi = { value: NUBI_U };
+      TERR_SH = sh;
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec2 vDetXZ;\nvarying vec2 vUvO;\nvarying float vNy;\nvarying float vWy;')
         .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDetXZ = (modelMatrix * vec4(position, 1.0)).xz;\nvUvO = uv;\nvNy = normalize(mat3(modelMatrix) * normal).y;\nvWy = (modelMatrix * vec4(position, 1.0)).y;');
       sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', '#include <common>\nuniform sampler2D uDet;\nuniform sampler2D uTinta;\nvarying vec2 vDetXZ;\nvarying vec2 vUvO;\nvarying float vNy;\nvarying float vWy;')
+        .replace('#include <common>', '#include <common>\nuniform sampler2D uDet;\nuniform sampler2D uTinta;\nuniform vec3 uNubi[' + NNUBI + '];\nvarying vec2 vDetXZ;\nvarying vec2 vUvO;\nvarying float vNy;\nvarying float vWy;')
         .replace('#include <color_fragment>', `#include <color_fragment>
 {
   // C: roccia procedurale sulle pareti ripide (la foto stirata sparisce)
@@ -991,6 +1065,14 @@ function colorizeTerrain(mesh){
   float d1 = texture2D(uDet, vDetXZ / 19.0).r;
   float d2 = texture2D(uDet, vDetXZ / 141.0).g;
   diffuseColor.rgb *= mix(0.84, 1.16, d1) * mix(0.92, 1.08, d2);
+  // ombre morbide dei cumuli che scorrono sul terreno
+  float ombra = 1.0;
+  for (int i = 0; i < ${NNUBI}; i++) {
+    vec3 nb = uNubi[i];
+    float dn = distance(vDetXZ, nb.xy) / max(nb.z, 1.0);
+    ombra *= 1.0 - 0.30 * (1.0 - smoothstep(0.55, 1.0, dn));
+  }
+  diffuseColor.rgb *= ombra;
   vec3 gGr = vec3(dot(diffuseColor.rgb, vec3(0.299, 0.587, 0.114)));
   diffuseColor.rgb = clamp((mix(gGr, diffuseColor.rgb, 1.30) - 0.5) * 1.07 + 0.5, 0.0, 1.0);
 }`);
@@ -1008,8 +1090,8 @@ function colorizeTerrain(mesh){
 // mezzogiorno d'estate (grifone).
 let SKY = null;
 const SKYPAL = {
-  alba:  { zen: 0x6e9ad2, hor: 0xe6e3da, sunC: 0xfff0d2, haze: 0.55 },
-  giorno:{ zen: 0x3a78cc, hor: 0xcadcec, sunC: 0xfff8ec, haze: 0.40 }
+  alba:  { zen: 0x5f8ecc, hor: 0xe4e2da, sunC: 0xfff0d2, haze: 0.50 },
+  giorno:{ zen: 0x2d6cc6, hor: 0xc6dcef, sunC: 0xfff8ec, haze: 0.35 }
 };
 function buildSky(){
   const geo = new THREE.SphereGeometry(24000, 40, 24);
@@ -1028,12 +1110,12 @@ function buildSky(){
         vec3 d = normalize(vDir);
         float t = clamp(d.y, -0.2, 1.0);
         // gradiente: zenit -> orizzonte, con una fascia di foschia bassa
-        float k = pow(max(t, 0.0), 0.42);
+        float k = pow(max(t, 0.0), 0.55);
         vec3 c = mix(uHor, uZen, k);
-        float bassa = 1.0 - smoothstep(0.0, 0.10 + 0.12 * uHaze, max(t, 0.0));
-        c = mix(c, uHor * 1.02, bassa * uHaze);
+        float bassa = 1.0 - smoothstep(0.0, 0.05 + 0.08 * uHaze, max(t, 0.0));
+        c = mix(c, uHor, bassa * uHaze);
         // sotto l'orizzonte: foschia uniforme (la gonna del mondo e' dello stesso colore)
-        c = mix(c, uHor * 0.97, smoothstep(0.0, -0.15, d.y));
+        c = mix(c, uHor, smoothstep(-0.02, -0.45, d.y));
         // sole: disco + alone largo
         float s = max(dot(d, uSun), 0.0);
         float disco = smoothstep(0.9993, 0.9998, s);
@@ -1042,6 +1124,10 @@ function buildSky(){
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
+        // all'orizzonte il cielo deve essere IDENTICO alla nebbia di three (che scrive il
+        // colore grezzo dopo il tone mapping): stessa miscela grezza, niente riga di stacco
+        float hb = 1.0 - smoothstep(0.0, 0.05, d.y);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, linearToOutputTexel(vec4(uHor, 1.0)).rgb, hb);
       }`
   });
   SKY = new THREE.Mesh(geo, mat);
@@ -1056,7 +1142,7 @@ function skyPalette(nome){
   SKY.material.uniforms.uSunC.value.set(p.sunC);
   SKY.material.uniforms.uHaze.value = p.haze;
   scene.background.set(p.hor); scene.fog.color.set(p.hor);
-  if (skirt) skirt.material.color.set(p.hor).multiplyScalar(0.97);
+  if (skirt) skirt.material.color.set(p.hor);
 }
 
 // ---------- ortofoto, griglia altezze, brecciato ----------
@@ -1387,7 +1473,7 @@ function buildGrifone(){
   // "gonna" del mondo: disco color foschia sotto e oltre il bordo del terreno,
   // così il limite della mappa sfuma nella nebbia invece di mostrare un orlo
   const sk = new THREE.Mesh(new THREE.CircleGeometry(60000, 48),
-    new THREE.MeshBasicMaterial({ color: scene.fog.color.clone().multiplyScalar(0.97), fog: true }));
+    new THREE.MeshBasicMaterial({ color: scene.fog.color.clone(), fog: true }));
   sk.rotation.x = -Math.PI / 2; sk.position.set(FC.BC[0], -46, FC.BC[1]);
   sk.name = 'Skirt'; sk.visible = false; skirt = sk;
   scene.add(sk);
@@ -1978,6 +2064,7 @@ let fpsAcc = 0, fpsN = 0, fpsT = 0, degraded = false;
 function tick(){
   const dt = Math.min(clock.getDelta(), 0.05);
   if (SKY) SKY.position.copy(camera.position);
+  if (NUVOLE.length) tickNuvole(dt);
   if (FLY.on) {
     tickFly(dt);
     if (mixer) mixer.update(0);
