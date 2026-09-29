@@ -1410,6 +1410,7 @@ function buildPeaks(){
 }
 
 // ---------- vegetazione e sassi istanziati ----------
+const VENTO_SH = [];
 async function loadVeg(loader){
   const r = await fetch('assets/veg.json?' + VER);
   if (!r.ok) return;
@@ -1448,7 +1449,47 @@ async function loadVeg(loader){
       if (key === 'Sphere_155') proto.material.color.setHex(0xdfa075);
       else if (key.startsWith('Cone_03')) proto.material.color.setHex(0x2d55b8);
     }
-    const im = new THREE.InstancedMesh(proto.geometry, proto.material, arr.length);
+    // alberi (chiome a cono + tronchi): chioma irregolare, colore variato per pianta, vento
+    const isChioma = /^Cone(_00\d)?$/.test(key);
+    const isTronco = /^Cylinder_02\d$/.test(key);
+    let geo = proto.geometry;
+    if (isChioma) {
+      geo = proto.geometry.clone();
+      const pa = geo.getAttribute('position');
+      let sd = 7 + key.length;
+      const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+      // bordo della chioma frastagliato: i vertici del cerchio di base rientrano a caso
+      let ymin = 1e9, ymax = -1e9;
+      for (let i = 0; i < pa.count; i++) { const y = pa.getY(i); if (y < ymin) ymin = y; if (y > ymax) ymax = y; }
+      for (let i = 0; i < pa.count; i++) {
+        const x = pa.getX(i), z = pa.getZ(i), r = Math.hypot(x, z);
+        if (r < 1e-4) continue;
+        const k = 0.72 + 0.4 * rnd();
+        pa.setXYZ(i, x * k, pa.getY(i) + (rnd() - 0.5) * (ymax - ymin) * 0.10, z * k);
+      }
+      pa.needsUpdate = true; geo.computeVertexNormals();
+    }
+    if ((isChioma || isTronco) && proto.material.isMeshStandardMaterial) {
+      proto.material.color.set(0xffffff);   // il colore lo da' la tinta per pianta
+      proto.material.onBeforeCompile = sh => {
+        sh.uniforms.uT = { value: 0 };
+        VENTO_SH.push(sh);
+        sh.vertexShader = sh.vertexShader
+          .replace('#include <common>', '#include <common>\nuniform float uT;')
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  // oscillazione al vento: cresce con l'altezza del vertice, fase diversa per pianta
+  vec4 wp = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+  float fase = wp.x * 0.05 + wp.z * 0.037;
+  float h = clamp(position.y / 6.0, 0.0, 1.0);
+  float sw = sin(uT * 1.7 + fase) * 0.12 + sin(uT * 3.1 + fase * 1.7) * 0.05;
+  transformed.x += sw * h * h * 1.6;
+  transformed.z += sw * h * h * 0.9;
+}`);
+      };
+    }
+    const im = new THREE.InstancedMesh(geo, proto.material, arr.length);
+    const col = new THREE.Color();
     for (let i = 0; i < arr.length; i++) {
       const t = arr[i];
       P.set(t[0], t[2], -t[1]);
@@ -1456,7 +1497,15 @@ async function loadVeg(loader){
       S.setScalar(t[4] || 1);
       M.compose(P, Q, S);
       im.setMatrixAt(i, M);
+      if (isChioma || isTronco) {
+        // tinta per pianta: verdi dal cupo al giallastro (le chiome), corteccia variabile (i tronchi)
+        const h1 = Math.sin(t[0] * 12.9898 + t[1] * 78.233) * 43758.5453, r1 = h1 - Math.floor(h1);
+        if (isChioma) col.setHSL(0.27 + (r1 - 0.5) * 0.06, 0.48 + r1 * 0.2, 0.12 + r1 * 0.10);
+        else col.setHSL(0.07, 0.40, 0.11 + r1 * 0.08);
+        im.setColorAt(i, col);
+      }
     }
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.instanceMatrix.needsUpdate = true;
     im.frustumCulled = false;
     im.castShadow = true;
@@ -2113,6 +2162,7 @@ function tick(){
   const dt = Math.min(clock.getDelta(), 0.05);
   if (SKY) SKY.position.copy(camera.position);
   if (NUVOLE.length) tickNuvole(dt);
+  if (VENTO_SH.length) { const tt = performance.now() / 1000; for (const sh of VENTO_SH) sh.uniforms.uT.value = tt; }
   if (FLY.on) {
     tickFly(dt);
     if (mixer) mixer.update(0);
