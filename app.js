@@ -905,7 +905,8 @@ function bindUI(){
   const key = (e, down) => {
     const k = e.key;
     if (FLY.on) {
-      if (k === 'Escape' && down) { closeModal(); flyStop(); return; }
+      if (k === 'Escape' && down) { closeModal(); if (FLY.mode === 'tour') tourStop(); else flyStop(); return; }
+      if ((k === 't' || k === 'T') && down) { if (FLY.mode === 'tour') tourStop(); else tourStart(); return; }
       const K = st.keys;
       const map = { ArrowLeft: 'L', a: 'L', A: 'L', ArrowRight: 'R', d: 'R', D: 'R',
                     ArrowUp: 'U', w: 'U', W: 'U', ArrowDown: 'D', s: 'D', S: 'D', ' ': 'F' };
@@ -948,7 +949,8 @@ function showHelp(){
     'Sul telefono usi il joystick e puoi scegliere di guidarlo <b>inclinando il telefono</b>. ' +
     'Se cabri troppo senza battere le ali va in <b>stallo</b>: picchia per riprendere velocità. ' +
     'Arriva lento e in assetto e <b>atterri</b> con le ali chiuse (tieni premuto BATTI per ripartire); troppo veloce contro il suolo e si riparte dal Cafornia. ' +
-    'Cerca i versanti al sole: le <b>ascendenze</b> ti portano su senza fatica, come fanno i grifoni veri.</li></ul>');
+    'Cerca i versanti al sole e i grifoni che girano in tondo: le <b>ascendenze</b> ti portano su senza fatica, come fanno i grifoni veri. ' +
+    '<b>SORVOLO</b> (tasto T): il grifone segue il percorso da solo, a 100 m sopra il sentiero, con la barra della gara; muovi un comando per riprenderlo.</li></ul>');
 }
 function showGara(){
   let g = '<h2>Skyrace del Maglio 2026</h2><h3>' + route.race_date + ' · start ore ' + route.start_time + ' · Magliano de\u2019 Marsi</h3>' +
@@ -1682,7 +1684,9 @@ function flyStart(){
 function flyStop(){
   if (!FLY.on) return;
   FLY.on = false;
-  sndWind(0, 0); grifP.visible = false; skirt.visible = false;
+  sndWind(0, 0);
+  if (FLY.mode === 'tour') { $('b-tour').classList.remove('on'); document.body.classList.remove('tour'); }
+  FLY.mode = 'volo'; grifP.visible = false; skirt.visible = false;
   if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = FLY.fogSaved[1]; FLY.fogSaved = null; }
   $('fade').style.opacity = 0; $('impatto').classList.remove('on');
   camera.fov = 55; camera.updateProjectionMatrix();
@@ -1763,10 +1767,93 @@ function ascendenzaAt(x, z, agl){
   ASC.sole = 2.0 * sole * clamp(1 - agl / 380, 0, 1);
   return ASC.pendio + Math.max(ASC.termica, ASC.sole);
 }
+// ---- sorvolo guidato: il grifone segue il tracciato da solo, a 100 m sopra il sentiero ----
+function tourStart(){
+  const f = FLY;
+  if (!f.on) flyStart();
+  f.mode = 'tour'; f.tourS = f.tourS || 0; f.fold = 0; f.flap = false; f.flapPow = 0; f.legs = 0;
+  // parte dal punto del tracciato piu' vicino al grifone
+  let bd = 1e9, bi = 0;
+  for (let i = 0; i < N; i += 3) { const d = Math.hypot(route.x[i] - f.pos.x, -route.y[i] - f.pos.z); if (d < bd) { bd = d; bi = i; } }
+  f.tourS = bi / (N - 1) * TOT;
+  $('b-tour').classList.add('on');
+  document.body.classList.add('tour');
+  const lab = document.querySelectorAll('#bar .slot .lab');
+  lab[0].textContent = 'Sorvolo'; lab[1].textContent = 'Km'; lab[3].textContent = 'Pendenza';
+  st.curZone = -1; st.curKey = null; st.lastHudS = -1e9; st.curPoi = -1;
+}
+function tourStop(){
+  const f = FLY;
+  if (f.mode !== 'tour') return;
+  f.mode = 'volo'; f.pitchV = 0; f.rollV = 0;
+  $('b-tour').classList.remove('on');
+  document.body.classList.remove('tour');
+  const lab = document.querySelectorAll('#bar .slot .lab');
+  lab[0].textContent = 'In volo'; lab[1].textContent = 'Velocità'; lab[3].textContent = 'Vario';
+  st.lastHudS = -1e9; st.curPoi = -1;
+}
+function tickTour(dt){
+  const f = FLY;
+  // qualunque comando riprende il controllo
+  if (f.flap || Math.abs(f.keyIn[0]) + Math.abs(f.keyIn[1]) + Math.abs(f.joyIn[0]) + Math.abs(f.joyIn[1]) > 0.3) { tourStop(); return; }
+  const VT = 26;
+  f.tourS += VT * dt;
+  if (f.tourS > TOT) f.tourS = 0;
+  st.s = f.tourS;                      // la barra, il profilo e la minimappa seguono il sorvolo
+  // bersaglio: 100 m sopra il sentiero, un po' avanti; quota sopra il suolo vero
+  posAt(f.tourS + 60, tmpA);
+  const gy = suoloVolo(tmpA.x, tmpA.z, tmpA.y + 100);
+  tmpA.y = Math.max(tmpA.y, gy > -1e3 ? gy : tmpA.y) + 95;
+  tmpB.copy(tmpA).sub(f.pos);
+  const dist = tmpB.length();
+  const yawT = Math.atan2(tmpB.x, tmpB.z);
+  let dy = yawT - f.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy));
+  f.yaw += clamp(dy, -1.2 * dt, 1.2 * dt);
+  const pT = clamp(Math.atan2(tmpB.y, Math.hypot(tmpB.x, tmpB.z)), -0.5, 0.5);
+  f.pitch += (pT - f.pitch) * (1 - Math.exp(-2.5 * dt));
+  f.roll += (clamp(dy * 1.5, -0.7, 0.7) - f.roll) * (1 - Math.exp(-2.5 * dt));
+  f.v += ((VT + clamp((dist - 80) * 0.15, -8, 14)) - f.v) * (1 - Math.exp(-1.5 * dt));
+  fwdOf(f, fwdV);
+  const yPrev = f.pos.y;
+  f.pos.addScaledVector(fwdV, f.v * dt);
+  // correzione dolce verso la quota bersaglio
+  f.pos.y += (tmpA.y - f.pos.y) * (1 - Math.exp(-0.8 * dt));
+  const g2 = suoloVolo(f.pos.x, f.pos.z, f.pos.y);
+  f.agl = g2 > -1e3 ? f.pos.y - g2 : 500;
+  if (g2 > -1e3 && f.pos.y < g2 + 25) f.pos.y = g2 + 25;
+  f.vario += ((f.pos.y - yPrev) / Math.max(dt, 1e-3) - f.vario) * (1 - Math.exp(-3 * dt));
+  // qualche battuta ogni tanto per tenersi su, poi planata
+  f.flapPow += (((Math.sin(performance.now() / 4200) > 0.55) ? 1 : 0) - f.flapPow) * (1 - Math.exp(-3 * dt));
+  if (f.flapPow > 0.1) f.flapPh += dt * FC.FLAP_HZ * Math.PI * 2;
+  gEul.set(-f.pitch, f.yaw, f.roll, 'YXZ');
+  grifP.quaternion.setFromEuler(gEul); grifP.position.copy(f.pos);
+  if (grifMat && grifMat.userData.sh) {
+    const idle = Math.sin(performance.now() / 900) * 0.06 + 0.10;
+    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.flapPow) + Math.sin(f.flapPh) * 0.85 * f.flapPow;
+    grifMat.userData.sh.uniforms.uSweep.value = 0; grifMat.userData.sh.uniforms.uLegs.value = 0;
+  }
+  // camera: piu' arretrata e alta, si vede il percorso
+  tmpD.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
+  tmpB.copy(f.pos).addScaledVector(tmpD, -48); tmpB.y += 22;
+  const cg = suoloVolo(tmpB.x, tmpB.z, tmpB.y);
+  if (cg > -1e3 && tmpB.y < cg + 6) tmpB.y = cg + 6;
+  camera.position.lerp(tmpB, 1 - Math.exp(-2.5 * dt));
+  camTgt.lerp(tmpC.copy(f.pos).addScaledVector(fwdV, 40), 1 - Math.exp(-4 * dt));
+  camera.up.set(0, 1, 0); camera.lookAt(camTgt);
+  if (Math.abs(camera.fov - 58) > 0.05) { camera.fov += (58 - camera.fov) * (1 - Math.exp(-2 * dt)); camera.updateProjectionMatrix(); }
+  if (SHADOWS && sunLight) {
+    sunLight.position.set(f.pos.x + SUNDIR.x * 2300, f.pos.y + SUNDIR.y * 2300, f.pos.z + SUNDIR.z * 2300);
+    sunLight.target.position.copy(f.pos); sunLight.target.updateMatrixWorld();
+  }
+  sndWind(f.v * 0.6, 0);
+  updateHUD();                         // zona, km, quota, pendenza, cancelli, POI: come con Lino
+  $('v-p').innerHTML = $('v-p').innerHTML;    // (la pendenza del sentiero sotto)
+}
 function tickFly(dt){
   const f = FLY;
   if (f.mode === 'terra') { tickTerra(dt); return; }
   if (f.mode === 'impatto') { tickImpatto(dt); return; }
+  if (f.mode === 'tour') { tickTour(dt); return; }
   // assetto a proiettile: oltre ~150 km/h in picchiata le ali si chiudono sul corpo;
   // rallentando (o alzando il muso) si riaprono da sole
   const foldT = clamp((f.v - 42) / 16, 0, 1) * clamp((-f.pitch - 0.12) / 0.2, 0, 1);
@@ -2208,6 +2295,27 @@ function updateHUDFly(){
     else if (ASC.turb > 0.3) asc = ' · turbolenza sottovento';
     $('zona-s').textContent = 'suolo a ' + Math.round(route.elev_a * f.agl) + ' m sotto di te' + asc;
   }
+  // punti di interesse: planandoci sopra compare il banner (tocco = scheda); i segnaposto
+  // si vedono pieni da lontano e si attenuano quando ci si e' sopra
+  let np = -1, nd = 150;
+  route.pois.forEach((p, i) => {
+    if (p.tipo === 'start') return;
+    posAt(p.km * 1000, tmpA);
+    const d = Math.hypot(tmpA.x - f.pos.x, tmpA.z - f.pos.z);
+    if (d < nd && f.agl < 260) { nd = d; np = i; }
+  });
+  if (np !== st.curPoi) {
+    st.curPoi = np;
+    const b = $('poi-banner');
+    if (np >= 0) { $('poi-n').textContent = route.pois[np].nome; $('poi-s').textContent = route.pois[np].sub;
+      b.classList.add('on'); b.onclick = () => openPoi(route.pois[np]); }
+    else b.classList.remove('on');
+  }
+  if (pinGroup) for (const sp of pinGroup.children) {
+    const d = sp.position.distanceTo(f.pos);
+    sp.material.opacity = 0.25 + 0.75 * clamp((d - 30) / 60, 0, 1);
+    sp.material.transparent = true;
+  }
   const vb = $('vario');
   if (vb) {
     const i = vb.firstElementChild, h = clamp(vr / 6, -1, 1) * 50;
@@ -2244,6 +2352,7 @@ function bindFlyUI(){
   // inclinazione del telefono
   $('b-tilt').onclick = () => { if (FLY.tilt) tiltOff(); else tiltOn(); };
   const bs = $('b-snd'); if (bs) bs.onclick = sndToggle;
+  $('b-tour').onclick = () => { if (FLY.mode === 'tour') tourStop(); else tourStart(); };
 }
 function onTilt(e){
   if (!FLY.on || !FLY.tilt) return;

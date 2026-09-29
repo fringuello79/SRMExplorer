@@ -134,6 +134,12 @@ body.grif #nav-hint,body.grif #slot-dp,body.grif #slot-gate,body.grif #slot-sent
 body.grif #ctrls{bottom:calc(14px + env(safe-area-inset-bottom))}
 body.grif #minimap{bottom:auto;top:calc(70px + env(safe-area-inset-top));left:auto;right:12px}
 body.grif #sito{display:none}
+#b-tour{display:none}
+body.grif #b-tour{display:inline-block}
+body.tour #profilo{display:block}
+body.tour #fly-hint{display:none}
+body.tour #joy,body.tour #b-flap,body.tour #vario,body.tour #b-tilt{opacity:.35}
+body.grif.tour #ctrls{bottom:calc(108px + env(safe-area-inset-bottom))}
 #joy{position:absolute;left:22px;bottom:calc(22px + env(safe-area-inset-bottom));width:150px;height:150px;
   border-radius:50%;background:rgba(12,31,20,.55);border:2px solid rgba(243,239,226,.35);
   backdrop-filter:blur(4px);pointer-events:auto;touch-action:none;display:none}
@@ -257,6 +263,7 @@ body.grif #sito{display:none}
     <button class="btn on" id="b-seg">SEGUI LINO</button>
     <button class="btn" id="b-pov">1ª PERSONA</button>
     <button class="btn" id="b-grif">GRIFONE</button>
+    <button class="btn" id="b-tour">SORVOLO</button>
     <button class="btn" id="b-gara">LA GARA</button>
     <button class="btn" id="b-help">?</button>
   </div>
