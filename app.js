@@ -1282,8 +1282,9 @@ const FLY = {
   fogSaved: null, camRoll: 0, ready: false
 };
 const FC = {
-  G: 9.81, VSTALL: 9.5, VMAX: 46, CD: 0.0036, PITCH_GLIDE: -0.105,   // -6°: pendenza di planata naturale
-  PITCH_UP: 0.50, PITCH_DN: 0.72, ROLL_MAX: 1.05, FLAP_HZ: 2.1, FLAP_ACC: 13.5, FLAP_LIFT: 5.5,
+  G: 9.81, VSTALL: 9.5, VMAX: 64, CD: 0.0027,   // VMAX 64 m/s ≈ 230 km/h in picchiata ripida
+  PITCH_GLIDE: -0.105,   // -6°: pendenza di planata naturale
+  PITCH_UP: 0.50, PITCH_DN: 0.88, ROLL_MAX: 1.05, FLAP_HZ: 2.1, FLAP_ACC: 16, FLAP_LIFT: 6,
   CEIL: 2950, AGL_MIN: 9,
   // confine morbido: ellisse centrata sul terreno (coordinate three: x, z)
   BC: [-636, 970], BR: [4250, 5050]
@@ -1331,12 +1332,14 @@ const GRIF_MESH_YAW = 0;   // orientamento del modello Meshy rispetto alla prua 
 function flyStart(){
   if (!grifTpl) { openCard('<h2>Grifone assente</h2><p>Il modello del grifone non è nella scena.</p>'); return; }
   buildGrifone();
-  // si parte da sopra Lino, nella direzione del sentiero, già in planata
-  posAt(st.s, tmpA); tanAt(st.s, tmpB);
-  const gy = groundAt(tmpA.x, tmpA.z);
-  FLY.pos.set(tmpA.x, Math.max(tmpA.y, gy) + 70, tmpA.z);
-  FLY.yaw = Math.atan2(tmpB.x, tmpB.z);
-  FLY.pitch = FC.PITCH_GLIDE; FLY.roll = 0; FLY.v = 20;
+  // si parte dalla vetta del Cafornia, prua verso Magliano: chi vuole picchiare
+  // ha subito tutta la valle davanti
+  const caf = (route.peaks || []).find(p => /cafornia/i.test(p.n));
+  if (caf) FLY.pos.set(caf.x, caf.z + 45, -caf.y);
+  else { posAt(st.s, tmpA); FLY.pos.set(tmpA.x, tmpA.y + 70, tmpA.z); }
+  posAt(0, tmpA);
+  FLY.yaw = Math.atan2(tmpA.x - FLY.pos.x, tmpA.z - FLY.pos.z);
+  FLY.pitch = FC.PITCH_GLIDE; FLY.roll = 0; FLY.v = 22;
   FLY.stall = false; FLY.flap = false; FLY.flapPow = 0; FLY.vario = 0;
   FLY.on = true; grifP.visible = true; skirt.visible = true;
   FLY.fogSaved = [scene.fog.near, scene.fog.far];
@@ -1362,6 +1365,7 @@ function flyStop(){
   if (!FLY.on) return;
   FLY.on = false; grifP.visible = false; skirt.visible = false;
   if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = FLY.fogSaved[1]; }
+  camera.fov = 55; camera.updateProjectionMatrix();
   document.body.classList.remove('grif');
   $('b-grif').classList.remove('on'); $('b-grif').textContent = 'GRIFONE';
   $('stallo').classList.remove('on');
@@ -1421,9 +1425,15 @@ function tickFly(dt){
     f.flapPow += (0 - f.flapPow) * (1 - Math.exp(-4 * dt));
   }
   const beat = Math.max(0, Math.sin(f.flapPh));
-  const thrust = FC.FLAP_ACC * beat * f.flapPow;
+  // in cabrata il battito rende di più (ali che 'remano'): salita decisa
+  const cabra = clamp(f.pitch / 0.35, 0, 1);
+  // oltre i ~110 km/h il battito non morde più: in cabrata veloce si scambia velocità con quota
+  const morde = clamp(1 - (f.v - 30) / 25, 0, 1);
+  const thrust = FC.FLAP_ACC * beat * f.flapPow * (1 + 0.9 * cabra) * morde;
   // bilancio di velocità lungo la prua
-  const drag = FC.CD * f.v * f.v * (1 + 1.4 * (1 - Math.cos(f.roll)));
+  // ad alta velocità il grifone si 'chiude' e la resistenza cala: la picchiata ripida arriva a VMAX
+  const chiuso = 1 - 0.46 * clamp((f.v - 25) / 25, 0, 1);
+  const drag = FC.CD * f.v * f.v * chiuso * (1 + 1.4 * (1 - Math.cos(f.roll)));
   let dv = -FC.G * Math.sin(f.pitch) - drag + thrust;
   if (f.v < FC.VSTALL + 1 && f.pitch > 0) dv -= 1.5;     // cabrata lenta: il muso perde ancora
   f.v = clamp(f.v + dv * dt, 3, FC.VMAX);
@@ -1435,16 +1445,17 @@ function tickFly(dt){
   const yPrev = f.pos.y;
   f.pos.addScaledVector(fwdV, f.v * dt);
   if (f.stall) f.pos.y -= (FC.VSTALL + 2 - f.v) * 2.2 * dt;
-  f.pos.y += FC.FLAP_LIFT * beat * f.flapPow * dt;
+  f.pos.y += FC.FLAP_LIFT * beat * f.flapPow * (1 + 1.2 * cabra) * morde * dt;
   const gy = groundAt(f.pos.x, f.pos.z);
   f.agl = gy > -1e3 ? f.pos.y - gy : 500;
   f.lift = ascendenzaAt(f.pos.x, f.pos.z, f.agl);
   f.pos.y += f.lift * dt;
   // suolo: si rimbalza sopra con perdita di velocità
   if (gy > -1e3 && f.pos.y < gy + FC.AGL_MIN) {
+    // sfioramento: il muso viene tirato su, si perde un po' di velocità ma non ci si pianta
     f.pos.y = gy + FC.AGL_MIN;
-    f.v = Math.max(f.v * 0.985, 8);
-    if (f.pitch < 0) f.pitch *= 0.6;
+    f.v = Math.max(f.v * 0.992, 13);
+    if (f.pitch < 0.12) f.pitch = 0.12;
     f.agl = FC.AGL_MIN;
   }
   // confine morbido: oltre l'ellisse la prua viene riportata dolcemente al centro
@@ -1482,6 +1493,9 @@ function tickFly(dt){
   camera.up.copy(upV);
   camera.lookAt(camTgt);
   camera.up.set(0, 1, 0);
+  // campo visivo che si allarga con la velocità: la picchiata si sente
+  const fovT = 55 + 16 * clamp((f.v - 22) / 40, 0, 1);
+  if (Math.abs(camera.fov - fovT) > 0.05) { camera.fov += (fovT - camera.fov) * (1 - Math.exp(-3 * dt)); camera.updateProjectionMatrix(); }
   if (SHADOWS && sunLight) {
     sunLight.position.set(f.pos.x + SUNDIR.x * 2300, f.pos.y + SUNDIR.y * 2300, f.pos.z + SUNDIR.z * 2300);
     sunLight.target.position.copy(f.pos);
