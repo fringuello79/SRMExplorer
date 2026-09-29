@@ -6,6 +6,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 const VER = 'v60';
+
+// ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
+// Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
+// la distanza efficace si allunga con la quota media fra camera e punto (fino a x1,8),
+// ma oltre fogFar la nebbia e' comunque piena (serve a nascondere i confini del mondo).
+THREE.ShaderChunk.fog_pars_vertex = '#ifdef USE_FOG\n varying float vFogDepth;\n varying float vFogY;\n#endif';
+THREE.ShaderChunk.fog_vertex = '#ifdef USE_FOG\n vFogDepth = - mvPosition.z;\n' +
+  ' #ifdef USE_INSTANCING\n  vFogY = ( modelMatrix * instanceMatrix * vec4( position, 1.0 ) ).y;\n' +
+  ' #else\n  vFogY = ( modelMatrix * vec4( position, 1.0 ) ).y;\n #endif\n#endif';
+THREE.ShaderChunk.fog_pars_fragment = '#ifdef USE_FOG\n uniform vec3 fogColor;\n varying float vFogDepth;\n varying float vFogY;\n' +
+  ' #ifdef FOG_EXP2\n  uniform float fogDensity;\n #else\n  uniform float fogNear;\n  uniform float fogFar;\n #endif\n#endif';
+THREE.ShaderChunk.fog_fragment = '#ifdef USE_FOG\n' +
+  ' float yAvg = 0.5 * ( cameraPosition.y + vFogY );\n' +
+  ' float hA = clamp( ( yAvg - 500.0 ) / 1400.0, 0.0, 1.0 );\n' +
+  ' float dEff = vFogDepth * mix( 1.0, 0.55, hA );\n' +
+  ' #ifdef FOG_EXP2\n  float fogFactor = 1.0 - exp( - fogDensity * fogDensity * dEff * dEff );\n' +
+  ' #else\n  float fogFactor = max( smoothstep( fogNear, fogFar, dEff ), smoothstep( fogFar * 0.85, fogFar * 1.1, vFogDepth ) );\n #endif\n' +
+  ' gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );\n#endif';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -1047,6 +1065,16 @@ function colorizeTerrain(mesh){
 {
   // C: roccia procedurale sulle pareti ripide (la foto stirata sparisce)
   float ripida = smoothstep(0.86, 0.62, abs(vNy));
+  // affioramenti e pietraie sopra i ~2000 m reali (y scena > 1420): chiazze di roccia
+  // guidate dal rumore a grande scala, piu' estese dove il pendio e' comunque ripido
+  {
+    float alto = smoothstep(1380.0, 1620.0, vWy);
+    float a1 = texture2D(uDet, vDetXZ / 210.0).r;
+    float a2 = texture2D(uDet, vDetXZ / 55.0).g;
+    float soglia = 0.62 - 0.18 * smoothstep(0.98, 0.80, abs(vNy));
+    float aff = smoothstep(soglia, soglia + 0.12, a1 * 0.7 + a2 * 0.3) * alto;
+    ripida = max(ripida, aff * 0.85);
+  }
   if (ripida > 0.003) {
     vec3 tinta = texture2D(uTinta, vUvO).rgb;
     float s1 = texture2D(uDet, vDetXZ / 23.0).r;
@@ -1065,6 +1093,26 @@ function colorizeTerrain(mesh){
   float d1 = texture2D(uDet, vDetXZ / 19.0).r;
   float d2 = texture2D(uDet, vDetXZ / 141.0).g;
   diffuseColor.rgb *= mix(0.84, 1.16, d1) * mix(0.92, 1.08, d2);
+  // dettaglio ravvicinato (sotto i ~350 m dalla camera): grana fine dell'erba e ciuffi,
+  // sfuma con la distanza cosi' da lontano la texture resta quella di prima
+  {
+    float dist = distance(cameraPosition, vec3(vDetXZ.x, vWy, vDetXZ.y));
+    float vicino = 1.0 - smoothstep(120.0, 380.0, dist);
+    if (vicino > 0.002) {
+      float g1 = texture2D(uDet, vDetXZ / 2.6).g;
+      float g2 = texture2D(uDet, vDetXZ / 0.9).r;
+      float g3 = texture2D(uDet, vDetXZ / 6.5).r;
+      float erba = 1.0 - ripida;
+      // ciuffi: macchie piu' chiare/gialle e solchi scuri, solo sull'erba
+      float ciuffo = smoothstep(0.55, 0.75, g3) * erba;
+      vec3 tintaCiuffo = vec3(1.04, 1.02, 0.90);
+      float grana = mix(0.90, 1.10, g1) * mix(0.95, 1.05, g2);
+      vec3 det = diffuseColor.rgb * grana * mix(vec3(1.0), tintaCiuffo, ciuffo * 0.45);
+      // sulla roccia: grana piu' dura e contrastata
+      det = mix(det, diffuseColor.rgb * mix(0.80, 1.22, g1) * mix(0.9, 1.1, g2), ripida);
+      diffuseColor.rgb = mix(diffuseColor.rgb, det, vicino);
+    }
+  }
   // ombre morbide dei cumuli che scorrono sul terreno
   float ombra = 1.0;
   for (int i = 0; i < ${NNUBI}; i++) {
