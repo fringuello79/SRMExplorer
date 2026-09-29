@@ -1282,13 +1282,13 @@ const FLY = {
   inX: 0, inY: 0, flap: false, flapPh: 0, flapPow: 0, stall: false, stallT: 0,
   vario: 0, lift: 0, agl: 0, tilt: false, tiltBase: null, tiltIn: [0, 0], joyIn: [0, 0], keyIn: [0, 0],
   fogSaved: null, camRoll: 0, ready: false,
-  mode: 'volo', tT: 0, fold: 0, flapHold: 0, tumble: null, orbit: 0
+  mode: 'volo', tT: 0, fold: 0, flapHold: 0, tumble: null, orbit: 0, legs: 0
 };
 const FC = {
   G: 9.81, VSTALL: 9.5, VMAX: 84, CD: 0.0027,   // VMAX 84 m/s ≈ 300 km/h a proiettile (ali chiuse)
   PITCH_GLIDE: -0.105,   // -6°: pendenza di planata naturale
   PITCH_UP: 0.50, PITCH_DN: 0.88, ROLL_MAX: 1.05, FLAP_HZ: 2.1, FLAP_ACC: 16, FLAP_LIFT: 6,
-  CEIL: 2950, AGL_MIN: 9, V_ATT: 17, V_IMP: 26, PITCH_IMP: -0.5, H_TERRA: 2.4,
+  CEIL: 2950, AGL_MIN: 2.3, V_ATT: 17, V_IMP: 26, PITCH_IMP: -0.5, H_TERRA: 2.75,
   // confine morbido: ellisse centrata sul terreno (coordinate three: x, z)
   BC: [-636, 970], BR: [4250, 5050]
 };
@@ -1310,11 +1310,12 @@ function buildGrifone(){
   grifMat.onBeforeCompile = sh => {
     sh.uniforms.uFlap = { value: 0 };
     sh.uniforms.uSweep = { value: 0 };
+    sh.uniforms.uLegs = { value: 0 };
     grifMat.userData.sh = sh;
     // uFlap: rotazione dell'ala attorno all'asse del corpo (battito, diedro, ali giù a terra)
     // uSweep: ali che si chiudono all'indietro lungo il corpo (assetto a proiettile)
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uFlap;\nuniform float uSweep;\nvec3 alaPos(vec3 p, float a, float sw){\n  float ax = abs(p.x); float rad = 0.12;\n  if (ax <= rad) return p;\n  float w = clamp((ax - rad) / 0.83, 0.0, 1.0);\n  float ang = a * (0.55 + 0.45 * w);\n  float dx = ax - rad;\n  float x2 = dx * cos(ang); float y2 = p.y + dx * sin(ang);\n  float sa = sw * (0.7 + 0.3 * w);\n  return vec3(sign(p.x) * (rad + x2 * cos(sa)), y2, p.z - x2 * sin(sa) - 0.15 * sw * w);\n}')
+      .replace('#include <common>', '#include <common>\nuniform float uFlap;\nuniform float uSweep;\nuniform float uLegs;\nvec3 alaPos(vec3 p, float a, float sw){\n  float ax = abs(p.x); float rad = 0.12;\n  if (ax <= rad) {\n    // zampe: la parte bassa del corpo dietro il petto ruota in giu\' attorno all\'anca\n    float wz = smoothstep(-0.08, -0.16, p.z) * smoothstep(-0.42, -0.34, p.z);\n    float wy = smoothstep(-0.16, -0.24, p.y);\n    float w = wz * wy * uLegs;\n    if (w > 0.001) {\n      float ang = -1.25 * w;\n      float st = 1.0 + 0.9 * w;\n      float dy = (p.y + 0.17) * st, dz = (p.z + 0.24) * st;\n      float c = cos(ang), sn = sin(ang);\n      return vec3(p.x, -0.17 + dy * c - dz * sn * 0.6, -0.24 + dz * c + dy * sn * 0.6);\n    }\n    return p;\n  }\n  float w = clamp((ax - rad) / 0.83, 0.0, 1.0);\n  float ang = a * (0.55 + 0.45 * w);\n  float dx = ax - rad;\n  float x2 = dx * cos(ang); float y2 = p.y + dx * sin(ang);\n  float sa = sw * (0.7 + 0.3 * w);\n  return vec3(sign(p.x) * (rad + x2 * cos(sa)), y2, p.z - x2 * sin(sa) - 0.15 * sw * w);\n}')
       .replace('#include <begin_vertex>', 'vec3 transformed = alaPos(vec3(position), uFlap, uSweep);')
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\n{ float ax = abs(position.x); if (ax > 0.12) { float w = clamp((ax - 0.12) / 0.83, 0.0, 1.0); float ang = uFlap * (0.55 + 0.45 * w) * sign(position.x);\n  float c = cos(ang), s = sin(ang); objectNormal = vec3(objectNormal.x * c - objectNormal.y * s, objectNormal.x * s + objectNormal.y * c, objectNormal.z); } }');
   };
@@ -1437,6 +1438,9 @@ function tickFly(dt){
   // rallentando (o alzando il muso) si riaprono da sole
   const foldT = clamp((f.v - 42) / 16, 0, 1) * clamp((-f.pitch - 0.12) / 0.2, 0, 1);
   f.fold += (foldT - f.fold) * (1 - Math.exp(-(foldT > f.fold ? 3.5 : 2.5) * dt));
+  // zampe: scendono gradualmente quando si rallenta vicino al suolo (preparazione al tocco)
+  const legsT = clamp((22 - f.v) / 8, 0, 1) * clamp((45 - f.agl) / 30, 0, 1);
+  f.legs += (legsT - f.legs) * (1 - Math.exp(-2.5 * dt));
   // ingressi: tastiera + joystick + inclinazione (il più forte vince)
   const pick = (a, b, c) => Math.abs(a) >= Math.abs(b) ? (Math.abs(a) >= Math.abs(c) ? a : c) : (Math.abs(b) >= Math.abs(c) ? b : c);
   f.inX = clamp(pick(f.keyIn[0], f.joyIn[0], f.tiltIn[0]), -1, 1);
@@ -1525,14 +1529,15 @@ function tickFly(dt){
     const fl = Math.sin(f.flapPh) * 0.85 * f.flapPow;
     grifMat.userData.sh.uniforms.uFlap.value = (idle * (1 - f.flapPow) + fl) * (1 - f.fold) - 0.30 * f.fold;
     grifMat.userData.sh.uniforms.uSweep.value = 1.15 * f.fold;
+    grifMat.userData.sh.uniforms.uLegs.value = f.legs;
   }
   // camera d'inseguimento
   const back = 26 + f.v * 0.07;
   tmpD.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
   tmpB.copy(f.pos).addScaledVector(tmpD, -back);
   tmpB.y += 12 - f.pitch * 10;
-  const cg = groundAt(tmpB.x, tmpB.z);
-  if (cg > -1e3 && tmpB.y < cg + 6) tmpB.y = cg + 6;
+  const cg = suoloVolo(tmpB.x, tmpB.z, tmpB.y);
+  if (cg > -1e3 && tmpB.y < cg + 4) tmpB.y = cg + 4;
   camera.position.lerp(tmpB, 1 - Math.exp(-5 * dt));
   tmpC.copy(f.pos).addScaledVector(fwdV, 30);
   camTgt.lerp(tmpC, 1 - Math.exp(-7 * dt));
@@ -1659,6 +1664,7 @@ function tickTerra(dt){
   // ali che si chiudono appena fermo
   const foldT = f.v < 2 ? 1 : 0;
   f.fold += (foldT - f.fold) * (1 - Math.exp(-3.5 * dt));
+  f.legs += (1 - f.legs) * (1 - Math.exp(-4 * dt));
   // decollo: BATTI tenuto premuto, oppure ci si butta da un pendio ripido con la picchiata
   const inY = clamp(Math.max(f.keyIn[1], f.joyIn[1], f.tiltIn[1]), -1, 1);
   if (f.flap && f.v < 2) f.flapHold += dt; else f.flapHold = 0;
@@ -1668,23 +1674,25 @@ function tickTerra(dt){
     const gAhead = groundAt(f.pos.x + fwdV.x * 40, f.pos.z + fwdV.z * 40);
     if (gAhead > -1e3 && gAhead < gy - 18) { via = true; f.v = 14; f.pitch = -0.35; }
   }
-  if (via) { f.mode = 'volo'; f.fold = 0; f.flapPow = 0.6; f.pos.y = gy + FC.AGL_MIN; closeModal(); }
+  if (via) { f.mode = 'volo'; f.fold = 0; f.flapPow = 0.6; f.pos.y = gy + FC.H_TERRA + 0.3; closeModal(); }
   // posa e camera che gira piano intorno
   gEul.set(-f.pitch, f.yaw, f.roll, 'YXZ');
   grifP.quaternion.setFromEuler(gEul);
   grifP.position.copy(f.pos);
   if (grifMat && grifMat.userData.sh) {
     const idle = Math.sin(performance.now() / 900) * 0.05 + 0.08;
-    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.fold) - 1.3 * f.fold + (f.flap ? Math.sin(performance.now() / 80) * 0.5 * (1 - f.fold) : 0);
-    grifMat.userData.sh.uniforms.uSweep.value = 0.55 * f.fold;
+    // ali chiuse a terra: raccolte all'indietro lungo il corpo e appena abbassate (le punte non devono bucare il suolo)
+    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.fold) - 0.42 * f.fold + (f.flap ? Math.sin(performance.now() / 80) * 0.5 * (1 - f.fold) : 0);
+    grifMat.userData.sh.uniforms.uSweep.value = 1.05 * f.fold;
+    grifMat.userData.sh.uniforms.uLegs.value = f.legs;
   }
   f.orbit += dt * 0.18;
   const ang = f.yaw + Math.PI + f.orbit;
-  tmpB.set(f.pos.x + Math.sin(ang) * 26, f.pos.y + 9, f.pos.z + Math.cos(ang) * 26);
-  const cg = groundAt(tmpB.x, tmpB.z);
-  if (cg > -1e3 && tmpB.y < cg + 4) tmpB.y = cg + 4;
+  tmpB.set(f.pos.x + Math.sin(ang) * 20, f.pos.y + 7, f.pos.z + Math.cos(ang) * 20);
+  const cg = terraVera(tmpB.x, tmpB.z, tmpB.y);
+  if (cg > -1e3 && tmpB.y < cg + 2.5) tmpB.y = cg + 2.5;
   camera.position.lerp(tmpB, 1 - Math.exp(-2.5 * dt));
-  camTgt.lerp(tmpC.copy(f.pos).setY(f.pos.y + 2), 1 - Math.exp(-4 * dt));
+  camTgt.lerp(tmpC.copy(f.pos).setY(f.pos.y - 1), 1 - Math.exp(-4 * dt));
   camera.up.set(0, 1, 0); camera.lookAt(camTgt);
   if (Math.abs(camera.fov - 55) > 0.05) { camera.fov += (55 - camera.fov) * (1 - Math.exp(-3 * dt)); camera.updateProjectionMatrix(); }
   if (SHADOWS && sunLight) {
@@ -1773,7 +1781,7 @@ function impatto(){
   f.impPos = f.pos.clone(); f.impYaw = f.yaw;
   f.v = Math.min(f.v, 9);
   const gt = terraVera(f.pos.x, f.pos.z, f.pos.y);
-  if (gt > -1e3) f.pos.y = gt + 3;
+  if (gt > -1e3) f.pos.y = gt + 2.1;
   $('impatto').classList.add('on');
   $('stallo').classList.remove('on');
 }
@@ -1801,7 +1809,7 @@ function tickImpatto(dt){
   f.pos.addScaledVector(fwdV, f.v * dt);
   const gt = terraVera(f.pos.x, f.pos.z, f.pos.y);
   const hop = 5 * Math.abs(Math.sin(f.tT * 7)) * Math.exp(-2.2 * f.tT);
-  if (gt > -1e3) f.pos.y = gt + 3 + hop;
+  if (gt > -1e3) f.pos.y = gt + 2.1 + hop;
   grifP.rotation.x += f.tumble[0] * dt; grifP.rotation.y += f.tumble[1] * dt; grifP.rotation.z += f.tumble[2] * dt;
   grifP.position.copy(f.pos);
   if (grifMat && grifMat.userData.sh) { grifMat.userData.sh.uniforms.uFlap.value = Math.sin(performance.now() / 60) * 0.9; grifMat.userData.sh.uniforms.uSweep.value = 0; }
