@@ -1338,6 +1338,7 @@ const GRIF_MESH_YAW = 0;   // orientamento del modello Meshy rispetto alla prua 
 function flyStart(){
   if (!grifTpl) { openCard('<h2>Grifone assente</h2><p>Il modello del grifone non è nella scena.</p>'); return; }
   buildGrifone();
+  if (!TIDX) { try { TIDX = buildTerrIndex(); } catch (e) { console.warn('indice terreno:', e); } }
   // si parte dalla vetta del Cafornia, prua verso Magliano: chi vuole picchiare
   // ha subito tutta la valle davanti
   const caf = (route.peaks || []).find(p => /cafornia/i.test(p.n));
@@ -1442,7 +1443,8 @@ function tickFly(dt){
   f.inY = clamp(pick(f.keyIn[1], f.joyIn[1], f.tiltIn[1]), -1, 1);   // +1 = picchiata
   const ctl = (f.stall ? 0.25 : 1) * (1 - 0.55 * f.fold);   // ali chiuse: comandi più duri
   // beccheggio: la planata naturale è leggermente a scendere; in stallo il muso cade
-  let pT = FC.PITCH_GLIDE + (f.inY > 0 ? -f.inY * FC.PITCH_DN : -f.inY * FC.PITCH_UP) * ctl;
+  // la picchiata resta piena anche ad ali chiuse; la cabrata e il rollio si induriscono
+  let pT = FC.PITCH_GLIDE + (f.inY > 0 ? -f.inY * FC.PITCH_DN * (f.stall ? 0.25 : 1) : -f.inY * FC.PITCH_UP * ctl);
   if (f.stall) pT = Math.min(pT, -0.55);
   if (f.pos.y > FC.CEIL) pT = Math.min(pT, -0.15 - (f.pos.y - FC.CEIL) / 200);
   f.pitch += (pT - f.pitch) * (1 - Math.exp(-(f.stall ? 2.6 : 2.2) * dt));
@@ -1482,7 +1484,7 @@ function tickFly(dt){
   f.pos.addScaledVector(fwdV, f.v * dt);
   if (f.stall) f.pos.y -= (FC.VSTALL + 2 - f.v) * 2.2 * dt;
   f.pos.y += FC.FLAP_LIFT * beat * f.flapPow * (1 + 1.2 * cabra) * morde * dt;
-  const gy = groundAt(f.pos.x, f.pos.z);
+  const gy = suoloVolo(f.pos.x, f.pos.z, f.pos.y);
   f.agl = gy > -1e3 ? f.pos.y - gy : 500;
   f.lift = ascendenzaAt(f.pos.x, f.pos.z, f.agl);
   f.pos.y += f.lift * dt;
@@ -1649,7 +1651,7 @@ function tickTerra(dt){
   f.v = Math.max(0, f.v - 14 * dt);
   fwdV.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
   f.pos.addScaledVector(fwdV, f.v * dt);
-  const gy = groundAt(f.pos.x, f.pos.z);
+  const gy = suoloVolo(f.pos.x, f.pos.z, f.pos.y);
   if (gy > -1e3) f.pos.y = gy + FC.H_TERRA;
   f.agl = 0; f.lift = 0; f.vario = 0;
   f.pitch += (0.18 - f.pitch) * (1 - Math.exp(-3 * dt));
@@ -1700,32 +1702,117 @@ function tickTerra(dt){
   }
 }
 // ---- impatto: capriola, schermo che sfuma, si riparte dal Cafornia ----
+// suolo VERO (mesh del terreno) in un punto: la griglia di groundAt e' grossolana e in
+// certi punti sta sotto la mesh, e il grifone finiva "sotto terra"
+// Indice spaziale dei triangoli della mesh del terreno (celle di 60 m in pianta):
+// il raycast di three su 360k triangoli costa ~100 ms, questo ~0,02 ms.
+let TERR = null, TIDX = null;
+function buildTerrIndex(){
+  scene.traverse(o => { if (!TERR && o.isMesh && (o.name || '').startsWith('Terrain')) TERR = o; });
+  if (!TERR) return null;
+  const g = TERR.geometry, pos = g.getAttribute('position');
+  TERR.updateMatrixWorld(true);
+  const n = pos.count, P = new Float32Array(n * 3), v = new THREE.Vector3();
+  for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(TERR.matrixWorld); P[i * 3] = v.x; P[i * 3 + 1] = v.y; P[i * 3 + 2] = v.z; }
+  const idx = g.index ? g.index.array : null;
+  const nt = idx ? idx.length / 3 : n / 3;
+  let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
+  for (let i = 0; i < n; i++) { const x = P[i * 3], z = P[i * 3 + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; }
+  const C = 60, nx = Math.ceil((x1 - x0) / C) + 1, nz = Math.ceil((z1 - z0) / C) + 1;
+  const cells = new Array(nx * nz);
+  const tri = (t, k) => idx ? idx[t * 3 + k] : t * 3 + k;
+  for (let t = 0; t < nt; t++) {
+    const a = tri(t, 0), b = tri(t, 1), c = tri(t, 2);
+    const xa = P[a * 3], xb = P[b * 3], xc = P[c * 3], za = P[a * 3 + 2], zb = P[b * 3 + 2], zc = P[c * 3 + 2];
+    const cx0 = Math.floor((Math.min(xa, xb, xc) - x0) / C), cx1 = Math.floor((Math.max(xa, xb, xc) - x0) / C);
+    const cz0 = Math.floor((Math.min(za, zb, zc) - z0) / C), cz1 = Math.floor((Math.max(za, zb, zc) - z0) / C);
+    for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
+      const k = cz * nx + cx;
+      (cells[k] || (cells[k] = [])).push(t);
+    }
+  }
+  return { P, tri, x0, z0, C, nx, nz, cells };
+}
+function terraVera(x, z, yHint){
+  const gg = groundAt(x, z);
+  if (!TIDX) { try { TIDX = buildTerrIndex(); } catch (e) { console.warn('indice terreno:', e); } if (!TIDX) return gg; }
+  const T = TIDX;
+  const cx = Math.floor((x - T.x0) / T.C), cz = Math.floor((z - T.z0) / T.C);
+  if (cx < 0 || cz < 0 || cx >= T.nx || cz >= T.nz) return gg;
+  const list = T.cells[cz * T.nx + cx];
+  if (!list) return gg;
+  const P = T.P;
+  let best = -1e4;
+  for (const t of list) {
+    const a = T.tri(t, 0), b = T.tri(t, 1), c = T.tri(t, 2);
+    const xa = P[a * 3], za = P[a * 3 + 2], xb = P[b * 3], zb = P[b * 3 + 2], xc = P[c * 3], zc = P[c * 3 + 2];
+    const d = (zb - zc) * (xa - xc) + (xc - xb) * (za - zc);
+    if (Math.abs(d) < 1e-9) continue;
+    const l1 = ((zb - zc) * (x - xc) + (xc - xb) * (z - zc)) / d;
+    const l2 = ((zc - za) * (x - xc) + (xa - xc) * (z - zc)) / d;
+    const l3 = 1 - l1 - l2;
+    if (l1 < -1e-4 || l2 < -1e-4 || l3 < -1e-4) continue;
+    const y = l1 * P[a * 3 + 1] + l2 * P[b * 3 + 1] + l3 * P[c * 3 + 1];
+    if (y > best) best = y;
+  }
+  return best > -1e3 ? best : gg;
+}
+// quota del suolo per il volo: griglia lontano dal suolo, mesh vera (raycast, ogni 4 frame)
+// quando si e' sotto i 120 m — la griglia sbaglia anche di 20 m e il grifone finiva sotto terra
+let gyCache = { x: 0, z: 0, y: -1e4, n: 0 };
+function suoloVolo(x, z, y){
+  const gg = groundAt(x, z);
+  if (gg < -1e3 || y - gg > 120) return gg;
+  const t = terraVera(x, z, y);
+  return t > -1e3 ? t : gg;
+}
 function impatto(){
   const f = FLY;
   f.mode = 'impatto'; f.tT = 0;
   f.tumble = [Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 8 - 4];
+  f.impPos = f.pos.clone(); f.impYaw = f.yaw;
+  f.v = Math.min(f.v, 9);
+  const gt = terraVera(f.pos.x, f.pos.z, f.pos.y);
+  if (gt > -1e3) f.pos.y = gt + 3;
   $('impatto').classList.add('on');
   $('stallo').classList.remove('on');
+}
+// si riparte dallo stesso punto, ma in alto e in planata
+function ripartiDaImpatto(){
+  const f = FLY;
+  const gt = terraVera(f.impPos.x, f.impPos.z, f.impPos.y);
+  f.pos.set(f.impPos.x, (gt > -1e3 ? gt : f.impPos.y) + 230, f.impPos.z);
+  f.yaw = f.impYaw; f.pitch = FC.PITCH_GLIDE; f.roll = 0; f.v = 20;
+  f.stall = false; f.flap = false; f.flapPow = 0; f.vario = 0; f.fold = 0; f.tumble = null;
+  f.mode = 'volo'; f.tT = 0;
+  grifP.rotation.set(0, 0, 0);
+  $('fade').style.opacity = 0; $('impatto').classList.remove('on');
+  fwdOf(f, fwdV);
+  camera.position.copy(f.pos).addScaledVector(fwdV, -34); camera.position.y += 12;
+  camTgt.copy(f.pos);
 }
 function tickImpatto(dt){
   const f = FLY;
   f.tT += dt;
   const T = 1.7;
-  // il grifone rotola e frena, la camera resta ferma dov'era
-  f.v = Math.max(0, f.v - 30 * dt);
+  // il grifone rotola sul posto e rimbalza, sempre SOPRA la mesh del terreno
+  f.v = Math.max(0, f.v - 20 * dt);
   fwdV.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
   f.pos.addScaledVector(fwdV, f.v * dt);
-  const gy = groundAt(f.pos.x, f.pos.z);
-  if (gy > -1e3) f.pos.y = gy + 2;
+  const gt = terraVera(f.pos.x, f.pos.z, f.pos.y);
+  const hop = 5 * Math.abs(Math.sin(f.tT * 7)) * Math.exp(-2.2 * f.tT);
+  if (gt > -1e3) f.pos.y = gt + 3 + hop;
   grifP.rotation.x += f.tumble[0] * dt; grifP.rotation.y += f.tumble[1] * dt; grifP.rotation.z += f.tumble[2] * dt;
   grifP.position.copy(f.pos);
   if (grifMat && grifMat.userData.sh) { grifMat.userData.sh.uniforms.uFlap.value = Math.sin(performance.now() / 60) * 0.9; grifMat.userData.sh.uniforms.uSweep.value = 0; }
+  // camera alta e arretrata, cosi' il grifone resta in vista anche su un pendio
+  tmpB.set(f.pos.x - fwdV.x * 22, f.pos.y + 14, f.pos.z - fwdV.z * 22);
+  const cg = terraVera(tmpB.x, tmpB.z, tmpB.y);
+  if (cg > -1e3 && tmpB.y < cg + 8) tmpB.y = cg + 8;
+  camera.position.lerp(tmpB, 1 - Math.exp(-5 * dt));
   camTgt.lerp(f.pos, 1 - Math.exp(-6 * dt)); camera.up.set(0, 1, 0); camera.lookAt(camTgt);
-  $('fade').style.opacity = clamp((f.tT - 0.5) / 0.8, 0, 1);
-  if (f.tT > T) {
-    $('impatto').classList.remove('on');
-    flyStart();                 // riparte dal Cafornia; flyStart azzera anche il fade
-  }
+  $('fade').style.opacity = clamp((f.tT - 0.6) / 0.8, 0, 1);
+  if (f.tT > T) ripartiDaImpatto();
 }
 let hudFlyT = 0;
 function updateHUDFly(){
