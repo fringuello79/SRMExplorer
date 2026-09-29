@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v55';
+const VER = 'v56';
 let LOADT0 = 0;
 let cumDP = null;
 const $ = id => document.getElementById(id);
@@ -218,30 +218,14 @@ async function boot(){
     }
   } catch (e) { console.warn('lupo discesa:', e); }
   loader.load('assets/extras.glb?' + VER, g => {
-    const dP = new THREE.Vector3(28.0, 3.21, -23.0);   // vecchia piazza -> centro piazza ruotata
+    // ceppo e incudine ora vivono in maglianoC.glb (magliano_centro.blend):
+    // le vecchie copie in extras.glb restano nascoste finche' non lo si rigenera
     const nomiC = ['Ristoro_ceppo', 'Ristoro_incudine_base', 'Ristoro_incudine_vita',
                    'Ristoro_incudine_corpo', 'Ristoro_incudine_corno'];
     g.scene.traverse(o => {
       if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.metalness = 0;
-      if (nomiC.includes(o.name)) o.position.add(dP);
+      if (nomiC.includes(o.name)) o.visible = false;
     });
-    // incudine: seconda punta laterale (specchio del corno rispetto al centro del corpo)
-    try {
-      const corno = g.scene.getObjectByName('Ristoro_incudine_corno');
-      const corpo = g.scene.getObjectByName('Ristoro_incudine_corpo');
-      if (corno && corpo) {
-        corpo.updateMatrixWorld(true);
-        const bc = new THREE.Box3().setFromObject(corpo);
-        const CXi = (bc.min.x + bc.max.x) / 2, CZi = (bc.min.z + bc.max.z) / 2;
-        const c2 = corno.clone();
-        c2.name = 'Ristoro_incudine_corno2';
-        const Mi = new THREE.Matrix4().makeTranslation(CXi, 0, CZi)
-          .multiply(new THREE.Matrix4().makeRotationY(Math.PI))
-          .multiply(new THREE.Matrix4().makeTranslation(-CXi, 0, -CZi));
-        c2.applyMatrix4(Mi);
-        g.scene.add(c2);
-      }
-    } catch (e) { console.warn('corno2:', e); }
     scene.add(g.scene);
   }, undefined, () => console.warn('extras assente'));
   loader.load('assets/borghi.glb?' + VER, g => {
@@ -363,6 +347,9 @@ function prepWorld(g){
     if (!o.isMesh) return;
     o.frustumCulled = true;
     const nm = o.name || '';
+    // arco, scritta e municipio ora arrivano da maglianoC.glb (magliano_centro.blend):
+    // le copie ancora dentro scene.glb restano nascoste finche' non si rigenera la scena
+    if (nm.startsWith('Arch_') || nm === 'ArchTxt' || nm === 'Comune_Meshy') { o.visible = false; return; }
     o.receiveShadow = true;
     if (!nm.startsWith('Terrain') && !nm.startsWith('SRM_Trail')) o.castShadow = true;
     if (nm.startsWith('Terrain')) {
@@ -370,20 +357,6 @@ function prepWorld(g){
     } else if (nm.startsWith('SRM_Trail')) {
       colorizeTrail(o);
       o.renderOrder = 1;
-    } else if (nm === 'ArchTxt') {
-      // scritta SRM: piu' grande attorno al centro del suo bbox + 0.45 verso chi arriva
-      try {
-        o.updateMatrixWorld(true);
-        const bbT = new THREE.Box3().setFromObject(o);
-        const cT = bbT.getCenter(new THREE.Vector3());
-        const sT = 2.2;   // 2.6 sbordava di ~10 cm sotto il banner
-        o.position.sub(cT).multiplyScalar(sT).add(cT);
-        o.scale.multiplyScalar(sT);
-        posAt(29550, tmpA);
-        const nT = new THREE.Vector3(tmpA.x - cT.x, 0, tmpA.z - cT.z).normalize();
-        o.position.add(nT.multiplyScalar(0.45));
-      } catch (e) { console.warn('ArchTxt:', e); }
-      if (o.material && o.material.isMeshStandardMaterial) { o.material.metalness = 0; o.material.roughness = 0.9; }
     } else if (nm === 'Forest' || nm.startsWith('Forest')) {
       o.visible = false;
     } else if (nm.startsWith('Clouds')) {
