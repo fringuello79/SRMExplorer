@@ -855,6 +855,7 @@ function showHelp(){
     '<b>▲</b> picchia, <b>▼</b> cabra, <b>◀ ▶</b> vira, <b>SPAZIO</b> (o il pulsante) batte le ali per salire. ' +
     'Sul telefono usi il joystick e puoi scegliere di guidarlo <b>inclinando il telefono</b>. ' +
     'Se cabri troppo senza battere le ali va in <b>stallo</b>: picchia per riprendere velocità. ' +
+    'Arriva lento e in assetto e <b>atterri</b> con le ali chiuse (tieni premuto BATTI per ripartire); troppo veloce contro il suolo e si riparte dal Cafornia. ' +
     'Cerca i versanti al sole: le <b>ascendenze</b> ti portano su senza fatica, come fanno i grifoni veri.</li></ul>');
 }
 function showGara(){
@@ -1279,13 +1280,14 @@ const FLY = {
   on: false, pos: new THREE.Vector3(), yaw: 0, pitch: 0, roll: 0, v: 18,
   inX: 0, inY: 0, flap: false, flapPh: 0, flapPow: 0, stall: false, stallT: 0,
   vario: 0, lift: 0, agl: 0, tilt: false, tiltBase: null, tiltIn: [0, 0], joyIn: [0, 0], keyIn: [0, 0],
-  fogSaved: null, camRoll: 0, ready: false
+  fogSaved: null, camRoll: 0, ready: false,
+  mode: 'volo', tT: 0, fold: 0, flapHold: 0, tumble: null, orbit: 0
 };
 const FC = {
   G: 9.81, VSTALL: 9.5, VMAX: 64, CD: 0.0027,   // VMAX 64 m/s ≈ 230 km/h in picchiata ripida
   PITCH_GLIDE: -0.105,   // -6°: pendenza di planata naturale
   PITCH_UP: 0.50, PITCH_DN: 0.88, ROLL_MAX: 1.05, FLAP_HZ: 2.1, FLAP_ACC: 16, FLAP_LIFT: 6,
-  CEIL: 2950, AGL_MIN: 9,
+  CEIL: 2950, AGL_MIN: 9, V_ATT: 17, V_IMP: 26, PITCH_IMP: -0.5, H_TERRA: 2.4,
   // confine morbido: ellisse centrata sul terreno (coordinate three: x, z)
   BC: [-636, 970], BR: [4250, 5050]
 };
@@ -1341,8 +1343,10 @@ function flyStart(){
   FLY.yaw = Math.atan2(tmpA.x - FLY.pos.x, tmpA.z - FLY.pos.z);
   FLY.pitch = FC.PITCH_GLIDE; FLY.roll = 0; FLY.v = 22;
   FLY.stall = false; FLY.flap = false; FLY.flapPow = 0; FLY.vario = 0;
+  FLY.mode = 'volo'; FLY.tT = 0; FLY.fold = 0; FLY.flapHold = 0; FLY.tumble = null;
+  $('fade').style.opacity = 0; $('impatto').classList.remove('on');
   FLY.on = true; grifP.visible = true; skirt.visible = true;
-  FLY.fogSaved = [scene.fog.near, scene.fog.far];
+  if (!FLY.fogSaved) FLY.fogSaved = [scene.fog.near, scene.fog.far];
   scene.fog.near = 700; scene.fog.far = degraded ? 3800 : 4600;
   document.body.classList.add('grif');
   document.body.classList.toggle('touch', isTouch());
@@ -1358,13 +1362,14 @@ function flyStart(){
   camera.position.copy(FLY.pos).addScaledVector(fwdV, -40); camera.position.y += 14;
   camTgt.copy(FLY.pos);
   if (!FLY.ready) { FLY.ready = true; bindFlyUI(); }
-  if (window.SRMX) { window.SRMX.fly = FLY; window.SRMX.flyStop = flyStop; window.SRMX.grifP = grifP; }
+  if (window.SRMX) { window.SRMX.fly = FLY; window.SRMX.flyStop = flyStop; window.SRMX.grifP = grifP; window.SRMX.stepFly = dt => tickFly(dt); }
   try { location.hash = 'grifone'; } catch (e) {}
 }
 function flyStop(){
   if (!FLY.on) return;
   FLY.on = false; grifP.visible = false; skirt.visible = false;
-  if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = FLY.fogSaved[1]; }
+  if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = FLY.fogSaved[1]; FLY.fogSaved = null; }
+  $('fade').style.opacity = 0; $('impatto').classList.remove('on');
   camera.fov = 55; camera.updateProjectionMatrix();
   document.body.classList.remove('grif');
   $('b-grif').classList.remove('on'); $('b-grif').textContent = 'GRIFONE';
@@ -1400,6 +1405,9 @@ function ascendenzaAt(x, z, agl){
 }
 function tickFly(dt){
   const f = FLY;
+  if (f.mode === 'terra') { tickTerra(dt); return; }
+  if (f.mode === 'impatto') { tickImpatto(dt); return; }
+  f.fold += (0 - f.fold) * (1 - Math.exp(-4 * dt));
   // ingressi: tastiera + joystick + inclinazione (il più forte vince)
   const pick = (a, b, c) => Math.abs(a) >= Math.abs(b) ? (Math.abs(a) >= Math.abs(c) ? a : c) : (Math.abs(b) >= Math.abs(c) ? b : c);
   f.inX = clamp(pick(f.keyIn[0], f.joyIn[0], f.tiltIn[0]), -1, 1);
@@ -1452,6 +1460,15 @@ function tickFly(dt){
   f.pos.y += f.lift * dt;
   // suolo: si rimbalza sopra con perdita di velocità
   if (gy > -1e3 && f.pos.y < gy + FC.AGL_MIN) {
+    if (f.v > FC.V_IMP || f.pitch < FC.PITCH_IMP) {
+      // troppo veloce o troppo a muso in giù: impatto
+      impatto();
+      return;
+    } else if (f.v < FC.V_ATT && f.pitch > -0.22) {
+      // lento e in assetto: si posa
+      atterra(gy);
+      return;
+    }
     // sfioramento: il muso viene tirato su, si perde un po' di velocità ma non ci si pianta
     f.pos.y = gy + FC.AGL_MIN;
     f.v = Math.max(f.v * 0.992, 13);
@@ -1476,7 +1493,7 @@ function tickFly(dt){
   if (grifMat && grifMat.userData.sh) {
     const idle = Math.sin(performance.now() / 900) * 0.06 + 0.10;    // ali leggermente a diedro
     const fl = Math.sin(f.flapPh) * 0.85 * f.flapPow;
-    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.flapPow) + fl;
+    grifMat.userData.sh.uniforms.uFlap.value = (idle * (1 - f.flapPow) + fl) * (1 - f.fold) - 1.3 * f.fold;
   }
   // camera d'inseguimento
   const back = 34 + f.v * 0.35;
@@ -1503,6 +1520,105 @@ function tickFly(dt){
   }
   $('stallo').classList.toggle('on', f.stall);
   updateHUDFly();
+}
+// ---- a terra: ali chiuse, si riparte battendo le ali (o buttandosi da un pendio) ----
+function atterra(gy){
+  const f = FLY;
+  f.mode = 'terra'; f.tT = 0; f.flapHold = 0; f.roll = 0;
+  f.pos.y = gy + FC.H_TERRA;
+  f.stall = false; $('stallo').classList.remove('on');
+  // vetta vicina: scheda della cima
+  let best = 1e9, bp = null;
+  for (const p of route.peaks) {
+    const d = Math.hypot(p.x - f.pos.x, -p.y - f.pos.z);
+    if (d < best) { best = d; bp = p; }
+  }
+  if (bp && best < 90) openCard('<h2>' + bp.n + '</h2><h3>' + bp.e + ' m · sei atterrato in vetta</h3>' +
+    '<p>Un grifone del Velino si posa qui a scaldarsi le ali al sole prima di ripartire. Tieni premuto <b>BATTI</b> (o SPAZIO) per decollare.</p>');
+}
+function tickTerra(dt){
+  const f = FLY;
+  f.tT += dt;
+  // frenata sul suolo lungo la prua
+  f.v = Math.max(0, f.v - 14 * dt);
+  fwdV.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
+  f.pos.addScaledVector(fwdV, f.v * dt);
+  const gy = groundAt(f.pos.x, f.pos.z);
+  if (gy > -1e3) f.pos.y = gy + FC.H_TERRA;
+  f.agl = 0; f.lift = 0; f.vario = 0;
+  f.pitch += (0.18 - f.pitch) * (1 - Math.exp(-3 * dt));
+  f.roll += (0 - f.roll) * (1 - Math.exp(-3 * dt));
+  // ali che si chiudono appena fermo
+  const foldT = f.v < 2 ? 1 : 0;
+  f.fold += (foldT - f.fold) * (1 - Math.exp(-3.5 * dt));
+  // decollo: BATTI tenuto premuto, oppure ci si butta da un pendio ripido con la picchiata
+  const inY = clamp(Math.max(f.keyIn[1], f.joyIn[1], f.tiltIn[1]), -1, 1);
+  if (f.flap && f.v < 2) f.flapHold += dt; else f.flapHold = 0;
+  let via = false;
+  if (f.flapHold > 0.35) { via = true; f.v = 12; f.pitch = 0.25; }
+  else if (inY > 0.5 && f.v < 2) {
+    const gAhead = groundAt(f.pos.x + fwdV.x * 40, f.pos.z + fwdV.z * 40);
+    if (gAhead > -1e3 && gAhead < gy - 18) { via = true; f.v = 14; f.pitch = -0.35; }
+  }
+  if (via) { f.mode = 'volo'; f.fold = 0; f.flapPow = 0.6; f.pos.y = gy + FC.AGL_MIN; closeModal(); }
+  // posa e camera che gira piano intorno
+  gEul.set(-f.pitch, f.yaw, f.roll, 'YXZ');
+  grifP.quaternion.setFromEuler(gEul);
+  grifP.position.copy(f.pos);
+  if (grifMat && grifMat.userData.sh) {
+    const idle = Math.sin(performance.now() / 900) * 0.05 + 0.08;
+    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.fold) - 1.3 * f.fold + (f.flap ? Math.sin(performance.now() / 80) * 0.5 * (1 - f.fold) : 0);
+  }
+  f.orbit += dt * 0.18;
+  const ang = f.yaw + Math.PI + f.orbit;
+  tmpB.set(f.pos.x + Math.sin(ang) * 26, f.pos.y + 9, f.pos.z + Math.cos(ang) * 26);
+  const cg = groundAt(tmpB.x, tmpB.z);
+  if (cg > -1e3 && tmpB.y < cg + 4) tmpB.y = cg + 4;
+  camera.position.lerp(tmpB, 1 - Math.exp(-2.5 * dt));
+  camTgt.lerp(tmpC.copy(f.pos).setY(f.pos.y + 2), 1 - Math.exp(-4 * dt));
+  camera.up.set(0, 1, 0); camera.lookAt(camTgt);
+  if (Math.abs(camera.fov - 55) > 0.05) { camera.fov += (55 - camera.fov) * (1 - Math.exp(-3 * dt)); camera.updateProjectionMatrix(); }
+  if (SHADOWS && sunLight) {
+    sunLight.position.set(f.pos.x + SUNDIR.x * 2300, f.pos.y + SUNDIR.y * 2300, f.pos.z + SUNDIR.z * 2300);
+    sunLight.target.position.copy(f.pos); sunLight.target.updateMatrixWorld();
+  }
+  hudFlyT++;
+  if (hudFlyT % 6 === 0) {
+    $('v-km').textContent = Math.round(f.v * 3.6);
+    $('v-q').innerHTML = Math.round(route.elev_a * f.pos.y + route.elev_b) + '<span class="unit"> m</span>';
+    $('v-p').innerHTML = '0,0<span class="unit"> m/s</span>';
+    $('zona-n').textContent = f.v < 2 ? 'A terra · ali chiuse' : 'Atterraggio';
+    $('zona-s').textContent = f.v < 2 ? 'tieni premuto BATTI per decollare' : '';
+    drawMiniPos();
+  }
+}
+// ---- impatto: capriola, schermo che sfuma, si riparte dal Cafornia ----
+function impatto(){
+  const f = FLY;
+  f.mode = 'impatto'; f.tT = 0;
+  f.tumble = [Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 8 - 4];
+  $('impatto').classList.add('on');
+  $('stallo').classList.remove('on');
+}
+function tickImpatto(dt){
+  const f = FLY;
+  f.tT += dt;
+  const T = 1.7;
+  // il grifone rotola e frena, la camera resta ferma dov'era
+  f.v = Math.max(0, f.v - 30 * dt);
+  fwdV.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
+  f.pos.addScaledVector(fwdV, f.v * dt);
+  const gy = groundAt(f.pos.x, f.pos.z);
+  if (gy > -1e3) f.pos.y = gy + 2;
+  grifP.rotation.x += f.tumble[0] * dt; grifP.rotation.y += f.tumble[1] * dt; grifP.rotation.z += f.tumble[2] * dt;
+  grifP.position.copy(f.pos);
+  if (grifMat && grifMat.userData.sh) grifMat.userData.sh.uniforms.uFlap.value = Math.sin(performance.now() / 60) * 0.9;
+  camTgt.lerp(f.pos, 1 - Math.exp(-6 * dt)); camera.up.set(0, 1, 0); camera.lookAt(camTgt);
+  $('fade').style.opacity = clamp((f.tT - 0.5) / 0.8, 0, 1);
+  if (f.tT > T) {
+    $('impatto').classList.remove('on');
+    flyStart();                 // riparte dal Cafornia; flyStart azzera anche il fade
+  }
 }
 let hudFlyT = 0;
 function updateHUDFly(){

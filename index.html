@@ -158,6 +158,11 @@ body.grif #sito{display:none}
 #stallo.on{opacity:1;animation:lamp .5s infinite alternate}
 #stallo small{display:block;font-family:Oswald,sans-serif;font-size:13px;letter-spacing:.15em;color:var(--avorio)}
 @keyframes lamp{from{opacity:.55}to{opacity:1}}
+#impatto{position:absolute;left:50%;top:40%;transform:translate(-50%,-50%);font-family:Anton,sans-serif;font-size:44px;
+  color:var(--arancio);letter-spacing:.12em;text-shadow:0 2px 12px rgba(0,0,0,.6);opacity:0;transition:opacity .15s;z-index:2}
+#impatto.on{opacity:1}
+#impatto small{display:block;font-family:Oswald,sans-serif;font-size:13px;letter-spacing:.15em;color:var(--avorio)}
+#fade{position:fixed;inset:0;background:var(--verde);opacity:0;pointer-events:none;z-index:12;transition:opacity .25s}
 #vario{position:absolute;right:16px;top:50%;transform:translateY(-50%);width:14px;height:160px;border-radius:7px;
   background:rgba(12,31,20,.5);border:1px solid rgba(243,239,226,.3);overflow:hidden;display:none}
 #vario i{position:absolute;left:0;right:0;background:var(--arancio)}
@@ -256,8 +261,10 @@ body.grif #sito{display:none}
 
 <footer id="profilo"><canvas id="prof-cv"></canvas></footer>
 
+<div id="fade"></div>
 <div id="fly">
   <div id="stallo">STALLO<small>picchia o batti le ali</small></div>
+  <div id="impatto">CHE BOTTA!<small>si riparte dal Cafornia</small></div>
   <div id="vario"><i></i><b></b></div>
   <div id="joy"><span class="jl t">PICCHIATA</span><span class="jl b">CABRATA</span><div id="joy-k"></div></div>
   <button id="b-tilt">INCLINA IL TELEFONO</button>
