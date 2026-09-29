@@ -123,6 +123,7 @@ async function boot(){
   await Promise.all([loadOrtho(), loadHeights()]);
   prog(0.12);
   buildStage();
+  buildSky();
   const draco = new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
   const loader = new GLTFLoader().setDRACOLoader(draco);
   $('load-step').textContent = 'montagne, sentiero, paesi…';
@@ -1001,6 +1002,63 @@ function colorizeTerrain(mesh){
 }
 
 
+// ---------- cielo: cupola con gradiente, sole e foschia all'orizzonte ----------
+// Una sfera che segue la camera; il colore all'orizzonte e' anche il colore della nebbia,
+// cosi' terreno lontano e cielo si fondono senza stacco. Due tavolozze: alba (Lino) e
+// mezzogiorno d'estate (grifone).
+let SKY = null;
+const SKYPAL = {
+  alba:  { zen: 0x6e9ad2, hor: 0xe6e3da, sunC: 0xfff0d2, haze: 0.55 },
+  giorno:{ zen: 0x3a78cc, hor: 0xcadcec, sunC: 0xfff8ec, haze: 0.40 }
+};
+function buildSky(){
+  const geo = new THREE.SphereGeometry(24000, 40, 24);
+  const mat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: {
+      uZen: { value: new THREE.Color(SKYPAL.alba.zen) },
+      uHor: { value: new THREE.Color(SKYPAL.alba.hor) },
+      uSunC: { value: new THREE.Color(SKYPAL.alba.sunC) },
+      uSun: { value: new THREE.Vector3(SUNDIR.x, SUNDIR.y, SUNDIR.z).normalize() },
+      uHaze: { value: SKYPAL.alba.haze }
+    },
+    vertexShader: 'varying vec3 vDir;\nvoid main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position.z = gl_Position.w * 0.99999; }',
+    fragmentShader: `uniform vec3 uZen, uHor, uSunC, uSun; uniform float uHaze; varying vec3 vDir;
+      void main(){
+        vec3 d = normalize(vDir);
+        float t = clamp(d.y, -0.2, 1.0);
+        // gradiente: zenit -> orizzonte, con una fascia di foschia bassa
+        float k = pow(max(t, 0.0), 0.42);
+        vec3 c = mix(uHor, uZen, k);
+        float bassa = 1.0 - smoothstep(0.0, 0.10 + 0.12 * uHaze, max(t, 0.0));
+        c = mix(c, uHor * 1.02, bassa * uHaze);
+        // sotto l'orizzonte: foschia uniforme (la gonna del mondo e' dello stesso colore)
+        c = mix(c, uHor * 0.97, smoothstep(0.0, -0.15, d.y));
+        // sole: disco + alone largo
+        float s = max(dot(d, uSun), 0.0);
+        float disco = smoothstep(0.9993, 0.9998, s);
+        float alone = pow(s, 90.0) * 0.55 + pow(s, 9.0) * 0.16;
+        c += uSunC * (disco * 1.6 + alone);
+        gl_FragColor = vec4(c, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`
+  });
+  SKY = new THREE.Mesh(geo, mat);
+  SKY.name = 'Sky'; SKY.frustumCulled = false; SKY.renderOrder = -10;
+  scene.add(SKY);
+  skyPalette('alba');
+}
+function skyPalette(nome){
+  const p = SKYPAL[nome]; if (!SKY || !p) return;
+  SKY.material.uniforms.uZen.value.set(p.zen);
+  SKY.material.uniforms.uHor.value.set(p.hor);
+  SKY.material.uniforms.uSunC.value.set(p.sunC);
+  SKY.material.uniforms.uHaze.value = p.haze;
+  scene.background.set(p.hor); scene.fog.color.set(p.hor);
+  if (skirt) skirt.material.color.set(p.hor).multiplyScalar(0.97);
+}
+
 // ---------- ortofoto, griglia altezze, brecciato ----------
 let ORTHO = null, HG = null, sunLight = null, SHADOWS = false, HEMI = null;
 const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
@@ -1329,7 +1387,7 @@ function buildGrifone(){
   // "gonna" del mondo: disco color foschia sotto e oltre il bordo del terreno,
   // così il limite della mappa sfuma nella nebbia invece di mostrare un orlo
   const sk = new THREE.Mesh(new THREE.CircleGeometry(60000, 48),
-    new THREE.MeshBasicMaterial({ color: 0xc9d6dc, fog: true }));
+    new THREE.MeshBasicMaterial({ color: scene.fog.color.clone().multiplyScalar(0.97), fog: true }));
   sk.rotation.x = -Math.PI / 2; sk.position.set(FC.BC[0], -46, FC.BC[1]);
   sk.name = 'Skirt'; sk.visible = false; skirt = sk;
   scene.add(sk);
@@ -1397,13 +1455,12 @@ function luceGrifone(on){
                         sun: sunLight.intensity, sunC: sunLight.color.clone(), hemi: HEMI ? HEMI.intensity : 1 };
   if (on) {
     renderer.toneMappingExposure = 1.34;
-    scene.background.set(0x9fc7f2); scene.fog.color.copy(scene.background);
+    skyPalette('giorno');
     sunLight.intensity = 3.1; sunLight.color.set(0xfff6e4);
     if (HEMI) HEMI.intensity = 1.25;
-    if (skirt) skirt.material.color.set(0xb9d3e6);
   } else {
     renderer.toneMappingExposure = LUCE0.exp;
-    scene.background.copy(LUCE0.bg); scene.fog.color.copy(LUCE0.bg);
+    skyPalette('alba');
     sunLight.intensity = LUCE0.sun; sunLight.color.copy(LUCE0.sunC);
     if (HEMI) HEMI.intensity = LUCE0.hemi;
   }
@@ -1920,6 +1977,7 @@ function tiltOff(){
 let fpsAcc = 0, fpsN = 0, fpsT = 0, degraded = false;
 function tick(){
   const dt = Math.min(clock.getDelta(), 0.05);
+  if (SKY) SKY.position.copy(camera.position);
   if (FLY.on) {
     tickFly(dt);
     if (mixer) mixer.update(0);
