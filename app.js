@@ -1514,6 +1514,71 @@ async function loadVeg(loader){
   console.log('vegetazione:', Object.keys(veg.inst).map(k => k + ':' + veg.inst[k].length).join(', '));
 }
 
+// ---------- suono sintetizzato (Web Audio, nessun file): vento, battito, tocco, botta ----------
+const SND = { ctx: null, on: true, wind: null, windG: null, windF: null, rumb: null, rumbG: null, noise: null, ready: false };
+function sndInit(){
+  if (SND.ready) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    SND.ctx = new AC();
+    try { SND.on = localStorage.getItem('srmx_snd') !== '0'; } catch (e) {}
+    const c = SND.ctx;
+    // rumore bianco in loop (2 s)
+    const n = c.sampleRate * 2, buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    SND.noise = buf;
+    const src = c.createBufferSource(); src.buffer = buf; src.loop = true;
+    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 500; f.Q.value = 0.7;
+    const g = c.createGain(); g.gain.value = 0;
+    src.connect(f); f.connect(g); g.connect(c.destination); src.start();
+    SND.wind = src; SND.windF = f; SND.windG = g;
+    // rombo basso per l'alta velocita'
+    const src2 = c.createBufferSource(); src2.buffer = buf; src2.loop = true;
+    const f2 = c.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 140;
+    const g2 = c.createGain(); g2.gain.value = 0;
+    src2.connect(f2); f2.connect(g2); g2.connect(c.destination); src2.start();
+    SND.rumb = src2; SND.rumbG = g2;
+    SND.ready = true;
+    const b = $('b-snd'); if (b) b.textContent = SND.on ? '\ud83d\udd0a' : '\ud83d\udd07';
+  } catch (e) { console.warn('audio:', e); }
+}
+function sndToggle(){
+  SND.on = !SND.on;
+  try { localStorage.setItem('srmx_snd', SND.on ? '1' : '0'); } catch (e) {}
+  const b = $('b-snd'); if (b) b.textContent = SND.on ? '\ud83d\udd0a' : '\ud83d\udd07';
+  if (!SND.on) sndWind(0, 0);
+}
+function sndWind(v, fold){
+  if (!SND.ready) return;
+  const c = SND.ctx, t = c.currentTime;
+  const k = SND.on && FLY.on && FLY.mode === 'volo' ? clamp((v - 8) / 60, 0, 1) : 0;
+  SND.windG.gain.setTargetAtTime(0.08 + 0.42 * k, t, 0.12);
+  if (k === 0) SND.windG.gain.setTargetAtTime(0, t, 0.3);
+  SND.windF.frequency.setTargetAtTime(320 + 1500 * k * k + 300 * fold, t, 0.15);
+  SND.rumbG.gain.setTargetAtTime(0.5 * k * k, t, 0.15);
+}
+function sndBurst(freq, q, gain, dur, type){
+  if (!SND.ready || !SND.on) return;
+  const c = SND.ctx, t = c.currentTime;
+  const src = c.createBufferSource(); src.buffer = SND.noise;
+  const f = c.createBiquadFilter(); f.type = type || 'bandpass'; f.frequency.setValueAtTime(freq, t); f.Q.value = q;
+  f.frequency.exponentialRampToValueAtTime(Math.max(60, freq * 0.45), t + dur);
+  const g = c.createGain(); g.gain.setValueAtTime(0.001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + dur * 0.25); g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(f); f.connect(g); g.connect(c.destination); src.start(t); src.stop(t + dur + 0.05);
+}
+function sndFlap(){ sndBurst(900, 1.2, 0.35, 0.28, 'bandpass'); }
+function sndTocco(){ sndBurst(400, 0.8, 0.3, 0.35, 'lowpass'); }
+function sndBotta(){
+  sndBurst(180, 0.6, 0.8, 0.5, 'lowpass');
+  if (!SND.ready || !SND.on) return;
+  const c = SND.ctx, t = c.currentTime, o = c.createOscillator(), g = c.createGain();
+  o.type = 'sine'; o.frequency.setValueAtTime(70, t); o.frequency.exponentialRampToValueAtTime(28, t + 0.5);
+  g.gain.setValueAtTime(0.6, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+  o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + 0.6);
+}
+const vibra = ms => { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} };
+
 // ---------- modalità GRIFONE: volo libero sopra il Velino ----------
 // Modello di volo arcade in unità di scena (~metri): planata con perdita di quota
 // costante, picchiata/cabrata scambiano quota e velocità, virata coordinata dal
@@ -1523,7 +1588,7 @@ const FLY = {
   inX: 0, inY: 0, flap: false, flapPh: 0, flapPow: 0, stall: false, stallT: 0,
   vario: 0, lift: 0, agl: 0, pitchV: 0, rollV: 0, tilt: false, tiltBase: null, tiltIn: [0, 0], joyIn: [0, 0], keyIn: [0, 0],
   fogSaved: null, camRoll: 0, ready: false,
-  mode: 'volo', tT: 0, fold: 0, flapHold: 0, tumble: null, orbit: 0, legs: 0
+  mode: 'volo', tT: 0, fold: 0, flapHold: 0, tumble: null, orbit: 0, legs: 0, flapCyc: 0, shake: 0
 };
 const FC = {
   G: 9.81, VSTALL: 9.5, VMAX: 84, CD: 0.0027,   // VMAX 84 m/s ≈ 300 km/h a proiettile (ali chiuse)
@@ -1610,12 +1675,14 @@ function flyStart(){
   camera.position.copy(FLY.pos).addScaledVector(fwdV, -40); camera.position.y += 14;
   camTgt.copy(FLY.pos);
   if (!FLY.ready) { FLY.ready = true; bindFlyUI(); }
+  sndInit();
   if (window.SRMX) { window.SRMX.fly = FLY; window.SRMX.flyStop = flyStop; window.SRMX.grifP = grifP; window.SRMX.stepFly = dt => tickFly(dt); }
   try { location.hash = 'grifone'; } catch (e) {}
 }
 function flyStop(){
   if (!FLY.on) return;
-  FLY.on = false; grifP.visible = false; skirt.visible = false;
+  FLY.on = false;
+  sndWind(0, 0); grifP.visible = false; skirt.visible = false;
   if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = FLY.fogSaved[1]; FLY.fogSaved = null; }
   $('fade').style.opacity = 0; $('impatto').classList.remove('on');
   camera.fov = 55; camera.updateProjectionMatrix();
@@ -1738,6 +1805,10 @@ function tickFly(dt){
     f.flapPow += (0 - f.flapPow) * (1 - Math.exp(-4 * dt));
   }
   const beat = Math.max(0, Math.sin(f.flapPh));
+  // un "whoosh" a ogni battuta (passaggio per l'inizio del ciclo)
+  const cyc = Math.floor(f.flapPh / (Math.PI * 2));
+  if (cyc !== f.flapCyc) { f.flapCyc = cyc; if (f.flapPow > 0.2) sndFlap(); }
+  sndWind(f.v, f.fold);
   // in cabrata il battito rende di più (ali che 'remano'): salita decisa
   const cabra = clamp(f.pitch / 0.35, 0, 1);
   // oltre i ~110 km/h il battito non morde più: in cabrata veloce si scambia velocità con quota
@@ -1814,7 +1885,13 @@ function tickFly(dt){
   const back = 26 + f.v * 0.07;
   tmpD.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
   tmpB.copy(f.pos).addScaledVector(tmpD, -back);
-  tmpB.y += 12 - f.pitch * 10;
+  tmpB.y += 12 - f.pitch * 10 - 4 * f.fold;
+  // micro-tremolio oltre i ~200 km/h
+  f.shake = clamp((f.v - 56) / 28, 0, 1);
+  if (f.shake > 0) {
+    const tn = performance.now();
+    tmpB.x += Math.sin(tn / 23) * 0.35 * f.shake; tmpB.y += Math.sin(tn / 17) * 0.3 * f.shake; tmpB.z += Math.cos(tn / 29) * 0.35 * f.shake;
+  }
   const cg = suoloVolo(tmpB.x, tmpB.z, tmpB.y);
   if (cg > -1e3 && tmpB.y < cg + 4) tmpB.y = cg + 4;
   camera.position.lerp(tmpB, 1 - Math.exp(-5 * dt));
@@ -1840,6 +1917,7 @@ function tickFly(dt){
 function atterra(gy){
   const f = FLY;
   f.mode = 'terra'; f.tT = 0; f.flapHold = 0; f.roll = 0; f.fold = 0; f.pitchV = 0; f.rollV = 0;
+  sndTocco(); vibra(40); sndWind(0, 0);
   f.pos.y = gy + FC.H_TERRA;
   f.stall = false; $('stallo').classList.remove('on');
   // vetta vicina: scheda della cima
@@ -2056,6 +2134,7 @@ function suoloVolo(x, z, y){
 function impatto(){
   const f = FLY;
   f.mode = 'impatto'; f.tT = 0;
+  sndBotta(); vibra([120, 60, 80]); sndWind(0, 0);
   f.tumble = [Math.random() * 6 - 3, Math.random() * 6 - 3, Math.random() * 8 - 4];
   f.impPos = f.pos.clone(); f.impYaw = f.yaw;
   f.v = Math.min(f.v, 9);
@@ -2164,6 +2243,7 @@ function bindFlyUI(){
   bf.addEventListener('pointerup', off); bf.addEventListener('pointercancel', off); bf.addEventListener('pointerleave', off);
   // inclinazione del telefono
   $('b-tilt').onclick = () => { if (FLY.tilt) tiltOff(); else tiltOn(); };
+  const bs = $('b-snd'); if (bs) bs.onclick = sndToggle;
 }
 function onTilt(e){
   if (!FLY.on || !FLY.tilt) return;

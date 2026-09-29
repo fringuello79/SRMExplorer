@@ -151,6 +151,9 @@ body.grif #sito{display:none}
   border-radius:15px;border:1px solid rgba(243,239,226,.3);background:var(--veil);color:var(--grigio);
   font-family:Oswald,sans-serif;font-size:10px;letter-spacing:.14em;pointer-events:auto;display:none;cursor:pointer}
 #b-tilt.on{color:#1d1206;background:var(--arancio);border-color:var(--arancio)}
+#b-snd{position:absolute;right:16px;top:calc(210px + env(safe-area-inset-top));width:36px;height:36px;border-radius:18px;
+  border:1px solid rgba(243,239,226,.3);background:var(--veil);color:var(--avorio);font-size:16px;pointer-events:auto;cursor:pointer}
+@media (max-width:700px){#b-snd{top:calc(170px + env(safe-area-inset-top));right:12px}}
 #fly-hint{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));
   font-size:11px;letter-spacing:.06em;color:var(--grigio);background:var(--veil);padding:4px 10px;border-radius:5px;white-space:nowrap}
 #stallo{position:absolute;left:50%;top:38%;transform:translate(-50%,-50%);font-family:Anton,sans-serif;font-size:42px;
@@ -268,6 +271,7 @@ body.grif #sito{display:none}
   <div id="vario"><i></i><b></b></div>
   <div id="joy"><span class="jl t">PICCHIATA</span><span class="jl b">CABRATA</span><div id="joy-k"></div></div>
   <button id="b-tilt">INCLINA IL TELEFONO</button>
+  <button id="b-snd" title="audio">🔊</button>
   <button id="b-flap">BATTI<small>LE ALI</small></button>
   <div id="fly-hint">▲ picchiata · ▼ cabrata · ◀ ▶ virata · SPAZIO batti le ali · ESC torna a Lino</div>
 </div>
