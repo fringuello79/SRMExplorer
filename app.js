@@ -1285,7 +1285,7 @@ const FLY = {
   mode: 'volo', tT: 0, fold: 0, flapHold: 0, tumble: null, orbit: 0
 };
 const FC = {
-  G: 9.81, VSTALL: 9.5, VMAX: 64, CD: 0.0027,   // VMAX 64 m/s ≈ 230 km/h in picchiata ripida
+  G: 9.81, VSTALL: 9.5, VMAX: 84, CD: 0.0027,   // VMAX 84 m/s ≈ 300 km/h a proiettile (ali chiuse)
   PITCH_GLIDE: -0.105,   // -6°: pendenza di planata naturale
   PITCH_UP: 0.50, PITCH_DN: 0.88, ROLL_MAX: 1.05, FLAP_HZ: 2.1, FLAP_ACC: 16, FLAP_LIFT: 6,
   CEIL: 2950, AGL_MIN: 9, V_ATT: 17, V_IMP: 26, PITCH_IMP: -0.5, H_TERRA: 2.4,
@@ -1309,10 +1309,13 @@ function buildGrifone(){
   // longitudinale del corpo, con le punte che flettono di più della radice
   grifMat.onBeforeCompile = sh => {
     sh.uniforms.uFlap = { value: 0 };
+    sh.uniforms.uSweep = { value: 0 };
     grifMat.userData.sh = sh;
+    // uFlap: rotazione dell'ala attorno all'asse del corpo (battito, diedro, ali giù a terra)
+    // uSweep: ali che si chiudono all'indietro lungo il corpo (assetto a proiettile)
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nuniform float uFlap;\nvec3 alaPos(vec3 p, float a){\n  float ax = abs(p.x); float rad = 0.12;\n  if (ax <= rad) return p;\n  float w = clamp((ax - rad) / 0.83, 0.0, 1.0);\n  float ang = a * (0.55 + 0.45 * w);\n  float dx = ax - rad;\n  return vec3(sign(p.x) * (rad + dx * cos(ang)), p.y + dx * sin(ang), p.z);\n}')
-      .replace('#include <begin_vertex>', 'vec3 transformed = alaPos(vec3(position), uFlap);')
+      .replace('#include <common>', '#include <common>\nuniform float uFlap;\nuniform float uSweep;\nvec3 alaPos(vec3 p, float a, float sw){\n  float ax = abs(p.x); float rad = 0.12;\n  if (ax <= rad) return p;\n  float w = clamp((ax - rad) / 0.83, 0.0, 1.0);\n  float ang = a * (0.55 + 0.45 * w);\n  float dx = ax - rad;\n  float x2 = dx * cos(ang); float y2 = p.y + dx * sin(ang);\n  float sa = sw * (0.7 + 0.3 * w);\n  return vec3(sign(p.x) * (rad + x2 * cos(sa)), y2, p.z - x2 * sin(sa) - 0.15 * sw * w);\n}')
+      .replace('#include <begin_vertex>', 'vec3 transformed = alaPos(vec3(position), uFlap, uSweep);')
       .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3(normal);\n{ float ax = abs(position.x); if (ax > 0.12) { float w = clamp((ax - 0.12) / 0.83, 0.0, 1.0); float ang = uFlap * (0.55 + 0.45 * w) * sign(position.x);\n  float c = cos(ang), s = sin(ang); objectNormal = vec3(objectNormal.x * c - objectNormal.y * s, objectNormal.x * s + objectNormal.y * c, objectNormal.z); } }');
   };
   m.material = grifMat;
@@ -1429,12 +1432,15 @@ function tickFly(dt){
   const f = FLY;
   if (f.mode === 'terra') { tickTerra(dt); return; }
   if (f.mode === 'impatto') { tickImpatto(dt); return; }
-  f.fold += (0 - f.fold) * (1 - Math.exp(-4 * dt));
+  // assetto a proiettile: oltre ~150 km/h in picchiata le ali si chiudono sul corpo;
+  // rallentando (o alzando il muso) si riaprono da sole
+  const foldT = clamp((f.v - 42) / 16, 0, 1) * clamp((-f.pitch - 0.12) / 0.2, 0, 1);
+  f.fold += (foldT - f.fold) * (1 - Math.exp(-(foldT > f.fold ? 3.5 : 2.5) * dt));
   // ingressi: tastiera + joystick + inclinazione (il più forte vince)
   const pick = (a, b, c) => Math.abs(a) >= Math.abs(b) ? (Math.abs(a) >= Math.abs(c) ? a : c) : (Math.abs(b) >= Math.abs(c) ? b : c);
   f.inX = clamp(pick(f.keyIn[0], f.joyIn[0], f.tiltIn[0]), -1, 1);
   f.inY = clamp(pick(f.keyIn[1], f.joyIn[1], f.tiltIn[1]), -1, 1);   // +1 = picchiata
-  const ctl = f.stall ? 0.25 : 1;
+  const ctl = (f.stall ? 0.25 : 1) * (1 - 0.55 * f.fold);   // ali chiuse: comandi più duri
   // beccheggio: la planata naturale è leggermente a scendere; in stallo il muso cade
   let pT = FC.PITCH_GLIDE + (f.inY > 0 ? -f.inY * FC.PITCH_DN : -f.inY * FC.PITCH_UP) * ctl;
   if (f.stall) pT = Math.min(pT, -0.55);
@@ -1462,7 +1468,7 @@ function tickFly(dt){
   const thrust = FC.FLAP_ACC * beat * f.flapPow * (1 + 0.9 * cabra) * morde;
   // bilancio di velocità lungo la prua
   // ad alta velocità il grifone si 'chiude' e la resistenza cala: la picchiata ripida arriva a VMAX
-  const chiuso = 1 - 0.46 * clamp((f.v - 25) / 25, 0, 1);
+  const chiuso = 1 - 0.46 * clamp((f.v - 25) / 25, 0, 1) - 0.33 * f.fold;
   const drag = FC.CD * f.v * f.v * chiuso * (1 + 1.4 * (1 - Math.cos(f.roll)));
   let dv = -FC.G * Math.sin(f.pitch) - drag + thrust;
   if (f.v < FC.VSTALL + 1 && f.pitch > 0) dv -= 1.5;     // cabrata lenta: il muso perde ancora
@@ -1515,10 +1521,11 @@ function tickFly(dt){
   if (grifMat && grifMat.userData.sh) {
     const idle = Math.sin(performance.now() / 900) * 0.06 + 0.10;    // ali leggermente a diedro
     const fl = Math.sin(f.flapPh) * 0.85 * f.flapPow;
-    grifMat.userData.sh.uniforms.uFlap.value = (idle * (1 - f.flapPow) + fl) * (1 - f.fold) - 1.3 * f.fold;
+    grifMat.userData.sh.uniforms.uFlap.value = (idle * (1 - f.flapPow) + fl) * (1 - f.fold) - 0.30 * f.fold;
+    grifMat.userData.sh.uniforms.uSweep.value = 1.15 * f.fold;
   }
   // camera d'inseguimento
-  const back = 34 + f.v * 0.35;
+  const back = 26 + f.v * 0.07;
   tmpD.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
   tmpB.copy(f.pos).addScaledVector(tmpD, -back);
   tmpB.y += 12 - f.pitch * 10;
@@ -1533,7 +1540,7 @@ function tickFly(dt){
   camera.lookAt(camTgt);
   camera.up.set(0, 1, 0);
   // campo visivo che si allarga con la velocità: la picchiata si sente
-  const fovT = 55 + 16 * clamp((f.v - 22) / 40, 0, 1);
+  const fovT = 55 + 13 * clamp((f.v - 22) / 55, 0, 1);
   if (Math.abs(camera.fov - fovT) > 0.05) { camera.fov += (fovT - camera.fov) * (1 - Math.exp(-3 * dt)); camera.updateProjectionMatrix(); }
   if (SHADOWS && sunLight) {
     sunLight.position.set(f.pos.x + SUNDIR.x * 2300, f.pos.y + SUNDIR.y * 2300, f.pos.z + SUNDIR.z * 2300);
@@ -1546,7 +1553,7 @@ function tickFly(dt){
 // ---- a terra: ali chiuse, si riparte battendo le ali (o buttandosi da un pendio) ----
 function atterra(gy){
   const f = FLY;
-  f.mode = 'terra'; f.tT = 0; f.flapHold = 0; f.roll = 0;
+  f.mode = 'terra'; f.tT = 0; f.flapHold = 0; f.roll = 0; f.fold = 0;
   f.pos.y = gy + FC.H_TERRA;
   f.stall = false; $('stallo').classList.remove('on');
   // vetta vicina: scheda della cima
@@ -1667,6 +1674,7 @@ function tickTerra(dt){
   if (grifMat && grifMat.userData.sh) {
     const idle = Math.sin(performance.now() / 900) * 0.05 + 0.08;
     grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.fold) - 1.3 * f.fold + (f.flap ? Math.sin(performance.now() / 80) * 0.5 * (1 - f.fold) : 0);
+    grifMat.userData.sh.uniforms.uSweep.value = 0.55 * f.fold;
   }
   f.orbit += dt * 0.18;
   const ang = f.yaw + Math.PI + f.orbit;
@@ -1711,7 +1719,7 @@ function tickImpatto(dt){
   if (gy > -1e3) f.pos.y = gy + 2;
   grifP.rotation.x += f.tumble[0] * dt; grifP.rotation.y += f.tumble[1] * dt; grifP.rotation.z += f.tumble[2] * dt;
   grifP.position.copy(f.pos);
-  if (grifMat && grifMat.userData.sh) grifMat.userData.sh.uniforms.uFlap.value = Math.sin(performance.now() / 60) * 0.9;
+  if (grifMat && grifMat.userData.sh) { grifMat.userData.sh.uniforms.uFlap.value = Math.sin(performance.now() / 60) * 0.9; grifMat.userData.sh.uniforms.uSweep.value = 0; }
   camTgt.lerp(f.pos, 1 - Math.exp(-6 * dt)); camera.up.set(0, 1, 0); camera.lookAt(camTgt);
   $('fade').style.opacity = clamp((f.tT - 0.5) / 0.8, 0, 1);
   if (f.tT > T) {
@@ -1739,7 +1747,7 @@ function updateHUDFly(){
     $('zona-n').textContent = bp.n;
     $('zona-s').textContent = Math.round(best) + ' m in pianta · vetta ' + bp.e + ' m';
   } else {
-    $('zona-n').textContent = 'Grifone del Velino';
+    $('zona-n').textContent = f.fold > 0.6 ? 'A proiettile · ali chiuse' : 'Grifone del Velino';
     $('zona-s').textContent = 'suolo a ' + Math.round(route.elev_a * f.agl) + ' m sotto di te' +
       (f.lift > 0.6 ? ' · ascendenza' : '');
   }
