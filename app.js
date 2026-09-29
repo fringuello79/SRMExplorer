@@ -318,6 +318,7 @@ function buildStage(){
   controls.addEventListener('start', () => setFollow(false, true));
   // luce d'alba, come nel film
   const hemi = new THREE.HemisphereLight(0xf2f7ff, 0x6d755b, 1.05);
+  HEMI = hemi;
   sunLight = new THREE.DirectionalLight(0xfff3e0, 2.4);
   sunLight.position.set(-1200, 1450, -1350);
   const fill = new THREE.DirectionalLight(0xffe7c8, 0.32);
@@ -1001,7 +1002,7 @@ function colorizeTerrain(mesh){
 
 
 // ---------- ortofoto, griglia altezze, brecciato ----------
-let ORTHO = null, HG = null, sunLight = null, SHADOWS = false;
+let ORTHO = null, HG = null, sunLight = null, SHADOWS = false, HEMI = null;
 const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
 const OC = [0, 0, 0];
 async function loadOrtho(){
@@ -1197,7 +1198,7 @@ function buildPeaks(){
   for (const p of route.peaks) {
     const g = new THREE.Group();
     g.position.set(p.x, p.z, -p.y);
-    const asta = new THREE.Mesh(astaGeo, astaMat);
+    const asta = new THREE.Mesh(astaGeo, astaMat.clone());
     asta.position.y = 27;
     const flag = new THREE.Mesh(flagGeo,
       new THREE.MeshBasicMaterial({ color: 0xf4951f, transparent: true, opacity: 0.62, side: THREE.DoubleSide }));
@@ -1209,7 +1210,7 @@ function buildPeaks(){
     lbl.userData.aspect = pl.aspect;
     lbl.scale.set(20.6 * pl.aspect, 20.6, 1);
     g.add(asta, flag, lbl);
-    g.userData = { lbl, flag };
+    g.userData = { lbl, flag, asta };
     grp.add(g); peakItems.push(g);
   }
   scene.add(grp);
@@ -1348,6 +1349,7 @@ function flyStart(){
   FLY.on = true; grifP.visible = true; skirt.visible = true;
   if (!FLY.fogSaved) FLY.fogSaved = [scene.fog.near, scene.fog.far];
   scene.fog.near = 700; scene.fog.far = degraded ? 3800 : 4600;
+  luceGrifone(true);
   document.body.classList.add('grif');
   document.body.classList.toggle('touch', isTouch());
   controls.enabled = false;
@@ -1371,6 +1373,7 @@ function flyStop(){
   if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = FLY.fogSaved[1]; FLY.fogSaved = null; }
   $('fade').style.opacity = 0; $('impatto').classList.remove('on');
   camera.fov = 55; camera.updateProjectionMatrix();
+  luceGrifone(false);
   document.body.classList.remove('grif');
   $('b-grif').classList.remove('on'); $('b-grif').textContent = 'GRIFONE';
   $('stallo').classList.remove('on');
@@ -1380,6 +1383,25 @@ function flyStop(){
   tiltOff();
   setView('follow');
   try { history.replaceState(null, '', location.pathname); } catch (e) {}
+}
+// luce da mezzogiorno d'estate in volo: cielo più blu, sole più alto e caldo, esposizione su.
+// La nebbia resta (serve a nascondere i confini): cambia solo il suo colore, che segue il cielo.
+let LUCE0 = null;
+function luceGrifone(on){
+  if (!LUCE0) LUCE0 = { exp: renderer.toneMappingExposure, bg: scene.background.clone(),
+                        sun: sunLight.intensity, sunC: sunLight.color.clone(), hemi: HEMI ? HEMI.intensity : 1 };
+  if (on) {
+    renderer.toneMappingExposure = 1.34;
+    scene.background.set(0x9fc7f2); scene.fog.color.copy(scene.background);
+    sunLight.intensity = 3.1; sunLight.color.set(0xfff6e4);
+    if (HEMI) HEMI.intensity = 1.25;
+    if (skirt) skirt.material.color.set(0xb9d3e6);
+  } else {
+    renderer.toneMappingExposure = LUCE0.exp;
+    scene.background.copy(LUCE0.bg); scene.fog.color.copy(LUCE0.bg);
+    sunLight.intensity = LUCE0.sun; sunLight.color.copy(LUCE0.sunC);
+    if (HEMI) HEMI.intensity = LUCE0.hemi;
+  }
 }
 function fwdOf(f, out){
   const cp = Math.cos(f.pitch);
@@ -1820,8 +1842,13 @@ function tickPeaks(dt){
       const d = camera.position.distanceTo(g.position);
       g.visible = d < 7500;
       if (!g.visible) continue;
-      const o = d < 1400 ? 1 : Math.max(0, 1 - (d - 1400) / 3000);
-      g.userData.lbl.material.opacity = o;
+      let o = d < 1400 ? 1 : Math.max(0, 1 - (d - 1400) / 3000);
+      // in volo l'asta e la bandierina sfumano quando il grifone ci arriva addosso
+      let vic = 1;
+      if (FLY.on) { const dg = FLY.pos.distanceTo(g.position); vic = clamp((dg - 50) / 110, 0, 1); }
+      g.userData.lbl.material.opacity = o * vic;
+      g.userData.asta.material.opacity = 0.5 * vic;
+      g.userData.flag.material.opacity = 0.62 * vic;
       const s2 = clamp(d * 0.11, 44, 190);
       const hh = s2 * 0.1875;
       g.userData.lbl.scale.set(hh * (g.userData.lbl.userData.aspect || 5.33), hh, 1);
