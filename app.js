@@ -1555,8 +1555,85 @@ function atterra(gy){
     const d = Math.hypot(p.x - f.pos.x, -p.y - f.pos.z);
     if (d < best) { best = d; bp = p; }
   }
-  if (bp && best < 90) openCard('<h2>' + bp.n + '</h2><h3>' + bp.e + ' m · sei atterrato in vetta</h3>' +
-    '<p>Un grifone del Velino si posa qui a scaldarsi le ali al sole prima di ripartire. Tieni premuto <b>BATTI</b> (o SPAZIO) per decollare.</p>');
+  if (bp && best < 90) openCard(schedaVetta(bp));
+}
+// ---- schede delle vette: testo curato + dati calcolati dalla scena ----
+const PEAK_INFO = {
+  'Monte Velino': ['Il tetto del massiccio e la terza vetta dell\u2019Appennino dopo il Corno Grande e il Monte Amaro. Un cono di calcare che domina la Marsica e il Fucino: la Riserva Naturale Orientata che porta il suo nome (1987) è il cuore del Parco Sirente Velino, e qui, sulle sue pareti, sono tornati a nidificare i grifoni reintrodotti negli anni Novanta.',
+    'La gara non tocca la cima: la sfiora sulla spalla, a 2.385 m, il punto più alto del tracciato. Dalla croce, nelle giornate limpide, lo sguardo corre dal Gran Sasso alla Maiella, dal Sirente al Terminillo e giù fino alla piana del Fucino.'],
+  'Monte Cafornia': ['La seconda cima del massiccio, gemella orientale del Velino, a cui è legata da una lunga cresta d\u2019alta quota. È il punto di partenza dei voli in questa modalità: da qui la valle è tutta davanti.',
+    'La Skyrace la costeggia lungo il crinale che dal Velino porta alla Selletta, dove comincia la grande discesa verso Fonte Canale: oltre 1.100 m di dislivello in tre chilometri.'],
+  'Monte di Sevice': ['La montagna della Capanna di Sevice: il rifugio ai suoi piedi, a 2.115 m, è l\u2019unico ristoro completo della gara e il secondo cancello orario (ore 12:45).',
+    'Dalla sua groppa si domina la conca della capanna e la lunga dorsale del Rozza da cui arrivano gli atleti.'],
+  'Monte Costognillo': ['Un\u2019anticima fra il Sevice e il Velino, sul bordo dell\u2019altopiano sommitale.',
+    'Sotto di lei passano le Tre Sorelle, il tratto più aereo della gara, prima dell\u2019attacco al cono del Velino.'],
+  'Cima Avezzano': ['Una delle cime che chiudono a nord-est il gruppo del Velino, affacciata sui valloni che scendono verso i Piani di Pezza.',
+    'Fuori dal tracciato ma a un tiro d\u2019ala dalla spalla del Velino: da qui si vede tutta la cresta percorsa dalla gara.'],
+  'Le Tre Sorelle': ['Tre groppe erbose in fila, a 2.200 m, sul filo fra la Val di Teve e i pascoli di Sevice. Il nome viene dalla loro forma: tre gobbe gemelle una dietro l\u2019altra.',
+    'La gara le percorre tutte, dal km 15 al km 16,7, prima di rasentare le pareti della Val di Teve: è il balcone più bello del giro.'],
+  'Monte Rozza': ['La lunga dorsale che sale da Passo Le Forche verso la Capanna di Sevice: il \u201c3B\u201d, la salita più lunga della gara.',
+    'Dal suo crinale, al km 12,6, si apre il balcone sulla Val di Teve, la valle selvaggia nel cuore della Riserva.'],
+  'Cimata Fossa dei Cavalli': ['Una cimata erbosa a est del Velino, sopra la Fossa dei Cavalli: un tempo i pascoli estivi delle mandrie in monticazione.',
+    'Fuori dal percorso, ma sorvegliata da vicino dai grifoni che sfruttano le ascendenze di questi versanti.'],
+  'Punta Trento': ['Con la vicina Punta Trieste forma una coppia di cime sul lato orientale del massiccio, battezzate con i nomi delle città redente dopo la Grande Guerra.', ''],
+  'Punta Trieste': ['La gemella di Punta Trento, poco più a est: due punte sulla stessa cresta, sopra i valloni che scendono verso i Piani di Pezza.', ''],
+  'Murolungo': ['Il \u201cmuro lungo\u201d che chiude a ovest la Val di Teve: una bastionata di pareti calcaree fra le più selvagge del Parco, regno di grifoni e di silenzio.',
+    'Sta di fronte al crinale del Rozza: è la montagna che gli atleti hanno davanti quando si affacciano sulla Val di Teve.'],
+  'Iaccio dei Montoni': ['Uno \u201ciaccio\u201d è, nel dialetto dei pastori, il recinto dove si chiudevano le greggi la notte: il nome racconta secoli di monticazione su queste montagne.', ''],
+  'Capo di Pezza': ['La cima che sovrasta i Piani di Pezza, il grande altopiano carsico sul versante di Rocca di Mezzo.', ''],
+  'Cimata della Selva del Coco': ['Una cimata boscosa sul versante nord-orientale del massiccio, dove la faggeta sale fin quasi in cresta.', ''],
+  'Monte il Bicchero': ['Una cima secondaria sul lato nord del gruppo, fra il Velino e i Piani di Pezza.', ''],
+  'Costone': ['Il nome dice tutto: un lungo costone erboso sulle propaggini settentrionali del massiccio.', ''],
+  'Colle delle Trincere': ['Un colle sul versante nord-orientale; il nome ricorda vecchie linee di trincea, forse legate alle esercitazioni militari del secolo scorso.', ''],
+  'Cima della Sentina': ['Una cima delle propaggini sud-orientali del Velino, sopra i paesi della piana.',
+    'Da qui si dominano Massa d\u2019Albe e i resti di Alba Fucens, la città romana ai piedi del monte.'],
+  'La Difensola': ['Un colle boscoso sopra Massa d\u2019Albe: la \u201cdifesa\u201d era il bosco protetto dalla comunità, dove il taglio era regolato.',
+    'Sotto di lei la gara torna verso Magliano lungo il sentiero E1, dopo Fonte Canale.'],
+  'Punta Canale': ['Il rilievo che dà il nome a Fonte Canale, il fontanile di sorgente dove gli atleti trovano l\u2019ultimo punto acqua (km 24,3).', ''],
+  'Monte Rastegliu': ['Una collina boscosa sopra Massa d\u2019Albe, sul lato della piana del Fucino.', ''],
+  'Monte della Maddalena': ['La collina che chiude a ovest la conca di Magliano de\u2019 Marsi, dalla parte opposta al Velino.',
+    'Dalla sua cima si vede tutto il giro: il paese, le colline di Rosciolo e, dietro, l\u2019intero massiccio.']
+};
+function schedaVetta(p){
+  const info = PEAK_INFO[p.n] || ['Una delle cime del gruppo del Velino.', ''];
+  const px = p.x, pz = -p.y;
+  // quanto si domina Magliano e quanto è lontana in linea d'aria
+  posAt(0, tmpA);
+  const dMag = Math.hypot(tmpA.x - px, tmpA.z - pz) / 1000;
+  const disl = p.e - 729;
+  // punto della gara più vicino
+  let bd = 1e9, bi = 0;
+  for (let i = 0; i < N; i += 2) {
+    const d = Math.hypot(route.x[i] - px, -route.y[i] - pz);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  const km = bi / (N - 1) * route.total_km;
+  const z = zoneAt(km);
+  let gara;
+  if (bd < 250) gara = 'La gara passa proprio qui: km ' + km.toFixed(1).replace('.', ',') + ', zona \u201c' + z[2] + '\u201d.';
+  else if (bd < 1500) gara = 'Il tracciato passa a ' + Math.round(bd / 50) * 50 + ' m in linea d\u2019aria: km ' + km.toFixed(1).replace('.', ',') + ', zona \u201c' + z[2] + '\u201d.';
+  else gara = 'La gara resta lontana: il punto più vicino del tracciato è a ' + (bd / 1000).toFixed(1).replace('.', ',') + ' km (km ' + km.toFixed(1).replace('.', ',') + ', \u201c' + z[2] + '\u201d).';
+  // vette vicine, con direzione
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'];
+  const vicine = route.peaks.filter(q => q !== p).map(q => {
+    const dx = q.x - px, dz = -q.y - pz, d = Math.hypot(dx, dz);
+    // angolo dal nord (blender +y = nord = -z three), in senso orario
+    const ang = Math.atan2(dx, -dz);
+    return { q, d, dir: dirs[((Math.round(ang / (Math.PI / 4)) % 8) + 8) % 8] };
+  }).sort((a, b) => a.d - b.d).slice(0, 3);
+  const vic = vicine.map(v => v.q.n + ' (' + v.q.e + ' m, ' + (v.d / 1000).toFixed(1).replace('.', ',') + ' km a ' + v.dir + ')').join(' · ');
+  // fascia altitudinale
+  let fascia;
+  if (p.e >= 2000) fascia = 'Sopra i 2.000 m: praterie d\u2019altitudine e pietraie, il terreno di caccia dei grifoni, che qui planano sfruttando le ascendenze dei versanti al sole.';
+  else if (p.e >= 1400) fascia = 'Siamo nella fascia della faggeta, che sul Velino sale fin verso i 1.800 m prima di lasciare il posto ai pascoli.';
+  else fascia = 'Colline di querceti, coltivi e pascoli: la campagna che circonda Magliano e i borghi ai piedi del massiccio.';
+  return '<h2>' + p.n + '</h2><h3>' + p.e.toLocaleString('it-IT') + ' m · sei atterrato in vetta</h3>' +
+    '<p>' + info[0] + '</p>' + (info[1] ? '<p style="margin-top:8px">' + info[1] + '</p>' : '') +
+    '<table><tr><th>Sopra Magliano</th><td>' + disl.toLocaleString('it-IT') + ' m di dislivello, ' + dMag.toFixed(1).replace('.', ',') + ' km in linea d\u2019aria</td></tr>' +
+    '<tr><th>La gara</th><td>' + gara + '</td></tr>' +
+    '<tr><th>Vette vicine</th><td>' + vic + '</td></tr>' +
+    '<tr><th>Ambiente</th><td>' + fascia + '</td></tr></table>' +
+    '<p style="margin-top:12px;color:var(--grigio);font-size:13px">Tieni premuto <b>BATTI</b> (o SPAZIO) per decollare; da un pendio ripido basta la picchiata.</p>';
 }
 function tickTerra(dt){
   const f = FLY;
