@@ -267,7 +267,9 @@ async function boot(){
     scene.add(g.scene);
   }, undefined, () => console.warn('maglianoC assente'));
   $('load-step').textContent = 'Lino…';
-  const lg = await loadGLB(loader, 'assets/lino.glb?' + VER, p => prog(0.66 + 0.28 * p));
+  let lg;
+  try { lg = await loadGLB(loader, 'assets/lino2.glb?' + VER, p => prog(0.66 + 0.28 * p)); LINO2 = true; }
+  catch (e) { console.warn('lino2.glb assente, uso lino.glb:', e); lg = await loadGLB(loader, 'assets/lino.glb?' + VER, p => prog(0.66 + 0.28 * p)); }
   prepLino(lg);
   try {
     const gr = await loadGLB(loader, 'assets/grifone.glb?' + VER, () => {});
@@ -298,7 +300,8 @@ async function boot(){
     go.style.display = 'inline-block';
     go.onclick = chiudi;
   }
-  window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt,
+  window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, cam: () => camera, ctrl: () => controls, lino: () => lino,
+                  look: (p, t) => { camera.position.set(p[0], p[1], p[2]); camTgt.set(t[0], t[1], t[2]); controls.target.copy(camTgt); controls.update(); },
                   y0arco: () => Y0_ARCO, pos: s => { posAt(s, tmpC); return [tmpC.x, tmpC.y, tmpC.z]; }, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
                   poi: i => openPoi(route.pois[i]), gara: showGara, segui: v => setFollow(v, false),
                   anim: () => action ? { t: +action.time.toFixed(3), ts: +mixer.timeScale.toFixed(2),
@@ -425,12 +428,27 @@ function prepWorld(g){
   // Capanna di Sevice: posizionata da Ale direttamente nel master
 }
 
+let LINO2 = false, LINOACT = null, LINOPOLI = [];
 function prepLino(lg){
   lino = new THREE.Group();
-  lg.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+  lg.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; }
+    if (/^L3_Pole/.test(o.name || '')) LINOPOLI.push(o); });
   lino.add(lg.scene);
   scene.add(lino);
-  if (lg.animations && lg.animations.length) {
+  if (LINO2 && lg.animations && lg.animations.length) {
+    // Lino Meshy riggato: camminata, corsa e "carica" (sprint) miscelate con la velocita'
+    mixer = new THREE.AnimationMixer(lg.scene);
+    LINOACT = {};
+    for (const c of lg.animations) {
+      const a = mixer.clipAction(c); a.setLoop(THREE.LoopRepeat, Infinity); a.play(); a.setEffectiveWeight(0);
+      if (/walk/i.test(c.name)) LINOACT.walk = a; else if (/charge/i.test(c.name)) LINOACT.charge = a; else LINOACT.run = a;
+    }
+    action = LINOACT.run || Object.values(LINOACT)[0];
+    lg.scene.traverse(o => { if (o.isSkinnedMesh && o.material) { o.material.metalness = 0; o.material.roughness = 0.85; } });
+    // il modello e' alto 1,7 unita': si porta all'altezza di Lino nella scena
+    lg.scene.scale.setScalar((route.lino_h || 7.8) / 1.7);
+    console.log('Lino 2: clip', Object.keys(LINOACT).join(','));
+  } else if (lg.animations && lg.animations.length) {
     mixer = new THREE.AnimationMixer(lg.scene);
     window._linoclips = lg.animations.map(c => [c.name, +c.duration.toFixed(2), c.tracks.length]);
     let best = null;
@@ -2522,7 +2540,20 @@ function tick(){
   const pitch = Math.asin(clamp(tmpB.y, -0.75, 0.75));
   lino.quaternion.setFromEuler(new THREE.Euler(0, rotY, 0));
   lino.rotateZ(-0.10 - pitch * 0.18);
-  if (mixer) { mixer.timeScale = clamp(0.25 + st.speed / 42, 0, 2.6) * (st.speed < 1 ? 0 : 1); mixer.update(dt); }
+  if (mixer && LINOACT) {
+    // pesi: fermo -> cammina (fino a ~30 km/h di scena) -> corre -> carica quando tiene premuto a lungo
+    const v = st.speed, sprint = st.hold > 2.2 ? 1 : 0;
+    const wWalk = clamp(1 - (v - 40) / 40, 0, 1), wRun = clamp((v - 40) / 40, 0, 1) * (1 - sprint), wCh = clamp((v - 40) / 40, 0, 1) * sprint;
+    const k = 1 - Math.exp(-6 * dt);
+    if (LINOACT.walk) LINOACT.walk.setEffectiveWeight(lerp(LINOACT.walk.getEffectiveWeight(), wWalk, k));
+    if (LINOACT.run) LINOACT.run.setEffectiveWeight(lerp(LINOACT.run.getEffectiveWeight(), wRun, k));
+    if (LINOACT.charge) LINOACT.charge.setEffectiveWeight(lerp(LINOACT.charge.getEffectiveWeight(), wCh, k));
+    mixer.timeScale = v < 1 ? 0 : clamp(0.35 + v / 90, 0.35, 2.2);
+    mixer.update(dt);
+    // i bastoncini si prendono a S. Maria in Valle Porclaneta (km 8,2)
+    const conPoli = st.s >= 8200;
+    for (const p of LINOPOLI) if (p.visible !== conPoli) p.visible = conPoli;
+  } else if (mixer) { mixer.timeScale = clamp(0.25 + st.speed / 42, 0, 2.6) * (st.speed < 1 ? 0 : 1); mixer.update(dt); }
   // camera
   tanAt(st.s + 8, tmpC);
   if (st.view === 'fpv') {
