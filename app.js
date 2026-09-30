@@ -277,6 +277,7 @@ async function boot(){
   } catch (e) { console.warn('grifone riggato assente, uso il Meshy statico:', e); }
   buildPins();
   buildAnimali(loader).catch(e => console.warn('animali:', e));
+  buildGEV(loader).catch(e => console.warn('GEV:', e));
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
   try { buildNuvole(); } catch (e) { console.warn('nuvole:', e); }
@@ -1407,27 +1408,57 @@ function peakLabel(nome, quota){
 function buildPeaks(){
   if (!route.peaks || !route.peaks.length) return;
   const grp = new THREE.Group();
-  const astaGeo = new THREE.CylinderGeometry(0.45, 0.75, 54, 6);
-  const astaMat = new THREE.MeshBasicMaterial({ color: 0xf3efe2, transparent: true, opacity: 0.5 });
-  const sh = new THREE.Shape();
-  sh.moveTo(0, 0); sh.lineTo(17, -4.5); sh.lineTo(0, -9); sh.lineTo(0, 0);
-  const flagGeo = new THREE.ShapeGeometry(sh);
+  // asta sottile con puntale, bandiera di stoffa che sventola (onda nel vertex shader):
+  // arancio SRM con banda avorio e bordo verde scuro (texture canvas), un anello alla base
+  const astaGeo = new THREE.CylinderGeometry(0.22, 0.34, 34, 8);
+  const astaMat = new THREE.MeshStandardMaterial({ color: 0xe9e4d6, metalness: 0.4, roughness: 0.5, transparent: true, opacity: 0.85 });
+  const puntaGeo = new THREE.SphereGeometry(0.75, 10, 8);
+  const flagGeo = new THREE.PlaneGeometry(13, 7.5, 16, 6);
+  flagGeo.translate(6.5, -3.75, 0);
+  const flagTex = (() => {
+    const c = document.createElement('canvas'); c.width = 256; c.height = 148;
+    const x = c.getContext('2d');
+    x.fillStyle = '#f4951f'; x.fillRect(0, 0, 256, 148);
+    x.fillStyle = '#f3efe2'; x.fillRect(0, 56, 256, 36);
+    x.fillStyle = '#0c1f14'; x.fillRect(0, 0, 256, 7); x.fillRect(0, 141, 256, 7); x.fillRect(0, 0, 8, 148);
+    // grafica: profilo di montagna stilizzato sulla banda
+    x.fillStyle = '#0c1f14'; x.beginPath(); x.moveTo(96, 88); x.lineTo(118, 62); x.lineTo(130, 74); x.lineTo(146, 58); x.lineTo(168, 88); x.closePath(); x.fill();
+    const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+  })();
   for (const p of route.peaks) {
     const g = new THREE.Group();
     g.position.set(p.x, p.z, -p.y);
     const asta = new THREE.Mesh(astaGeo, astaMat.clone());
-    asta.position.y = 27;
-    const flag = new THREE.Mesh(flagGeo,
-      new THREE.MeshBasicMaterial({ color: 0xf4951f, transparent: true, opacity: 0.62, side: THREE.DoubleSide }));
-    flag.position.y = 52.5;
+    asta.position.y = 17;
+    const punta = new THREE.Mesh(puntaGeo, new THREE.MeshStandardMaterial({ color: 0xf4951f, metalness: 0.3, roughness: 0.5, transparent: true, opacity: 0.95 }));
+    punta.position.y = 34.6;
+    const fm = new THREE.MeshBasicMaterial({ map: flagTex, transparent: true, opacity: 0.95, side: THREE.DoubleSide });
+    fm.onBeforeCompile = shd => {
+      shd.uniforms.uT = { value: 0 }; VENTO_SH.push(shd);
+      shd.vertexShader = shd.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uT;')
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+{
+  // stoffa: onda che cresce verso il bordo libero (x da 0 a 13), fase dalla posizione nel mondo
+  float w = position.x / 13.0;
+  float fase = uT * 3.2 + modelMatrix[3].x * 0.01 + modelMatrix[3].z * 0.013;
+  transformed.z += sin(w * 5.0 - fase) * 1.1 * w * w + sin(w * 9.0 - fase * 1.7) * 0.35 * w;
+  transformed.y += sin(w * 3.0 - fase * 0.8) * 0.25 * w;
+}`);
+    };
+    const flag = new THREE.Mesh(flagGeo, fm);
+    flag.position.y = 33.6;
+    // la bandiera sventola sottovento (vento da NO -> verso SE)
+    flag.rotation.y = -Math.atan2(VENTO.z, VENTO.x);
     const pl = peakLabel(p.n, p.e);
-    const lbl = new THREE.Sprite(new THREE.SpriteMaterial({
-      map: pl.tex, transparent: true, depthTest: false }));
-    lbl.position.y = 70;
+    const lbl = new THREE.Sprite(new THREE.SpriteMaterial({ map: pl.tex, transparent: true, depthTest: false }));
+    lbl.position.y = 46;
     lbl.userData.aspect = pl.aspect;
     lbl.scale.set(20.6 * pl.aspect, 20.6, 1);
-    g.add(asta, flag, lbl);
-    g.userData = { lbl, flag, asta };
+    g.add(asta, punta, flag, lbl);
+    g.userData = { lbl, flag, asta, punta };
+    // sul Velino c'e' la croce di vetta (modello GEV): niente asta ne' bandiera, solo l'etichetta
+    if (/velino/i.test(p.n)) { asta.visible = punta.visible = flag.visible = false; lbl.position.y = 62; }
     grp.add(g); peakItems.push(g);
   }
   scene.add(grp);
@@ -1614,6 +1645,36 @@ function tickAnimali(dt){
   }
 }
 
+// ---------- i volontari del GEV sulla vetta del Velino, con la croce di vetta ----------
+// Modello Meshy (foto dei volontari sulla cima + roccia sommitale + croce), decimato a 152k tri.
+// Unita' del modello: le persone sono alte ~0,45 -> scala 17,3 perche' siano alte come Lino.
+// Il piano dei piedi (z ~ -0,20 del modello) viene messo alla quota della vetta: il cumulo di
+// rocce sotto (fino a -0,95) resta parzialmente annegato nel terreno, la croce e' verticale,
+// i volti guardano a nord (il modello guarda +Z in glTF: rotazione di 180 gradi su Y).
+let GEV = null;
+async function buildGEV(loader){
+  const pk = (route.peaks || []).find(p => /velino/i.test(p.n));
+  if (!pk) return;
+  const g = await loadGLB(loader, 'assets/gev.glb?' + VER, () => {});
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; } } });
+  const S = 17.3, PIEDI = -0.20;
+  // vetta vera della mesh: si cerca il massimo in un intorno di 30 m del picco
+  let top = -1e9, tx = pk.x, tz = -pk.y;
+  for (let dx = -30; dx <= 30; dx += 6) for (let dz = -30; dz <= 30; dz += 6) {
+    const y = terraVera(pk.x + dx, -pk.y + dz, pk.z + 50);
+    if (y > top) { top = y; tx = pk.x + dx; tz = -pk.y + dz; }
+  }
+  const grp = new THREE.Group(); grp.name = 'GEV_Velino';
+  g.scene.scale.setScalar(S);
+  g.scene.position.y = -PIEDI * S;          // il piano dei piedi va all'origine del gruppo
+  g.scene.rotation.y = Math.PI;             // volti a nord
+  grp.add(g.scene);
+  grp.position.set(tx, top + 0.2, tz);
+  scene.add(grp);
+  GEV = grp;
+  console.log('GEV sul Velino a', tx.toFixed(0), top.toFixed(1), tz.toFixed(0));
+}
+
 // ---------- suono sintetizzato (Web Audio, nessun file): vento, battito, tocco, botta ----------
 const SND = { ctx: null, on: true, wind: null, windG: null, windF: null, rumb: null, rumbG: null, noise: null, ready: false };
 function sndInit(){
@@ -1651,11 +1712,14 @@ function sndToggle(){
 function sndWind(v, fold){
   if (!SND.ready) return;
   const c = SND.ctx, t = c.currentTime;
-  const k = SND.on && FLY.on && FLY.mode === 'volo' ? clamp((v - 8) / 60, 0, 1) : 0;
-  SND.windG.gain.setTargetAtTime(0.08 + 0.42 * k, t, 0.12);
-  if (k === 0) SND.windG.gain.setTargetAtTime(0, t, 0.3);
-  SND.windF.frequency.setTargetAtTime(320 + 1500 * k * k + 300 * fold, t, 0.15);
-  SND.rumbG.gain.setTargetAtTime(0.5 * k * k, t, 0.15);
+  // discreto fino a ~130 km/h (36 m/s), poi sale in modo deciso
+  const attivo = SND.on && FLY.on && FLY.mode === 'volo';
+  const k1 = attivo ? clamp((v - 8) / 28, 0, 1) : 0;          // fino a 130 km/h: sussurro
+  const k2 = attivo ? clamp((v - 36) / 34, 0, 1) : 0;         // da 130 a 250 km/h: vento vero
+  const k = Math.max(k1 * 0.3, k2);
+  SND.windG.gain.setTargetAtTime(attivo ? 0.03 + 0.10 * k1 + 0.42 * k2 : 0, t, attivo ? 0.12 : 0.3);
+  SND.windF.frequency.setTargetAtTime(300 + 500 * k1 + 1300 * k2 * k2 + 300 * fold, t, 0.15);
+  SND.rumbG.gain.setTargetAtTime(0.55 * k2 * k2, t, 0.15);
 }
 function sndBurst(freq, q, gain, dur, type){
   if (!SND.ready || !SND.on) return;
@@ -1749,8 +1813,9 @@ function posaGrifone(flap, sweep, legs, roll, pitchIn, flutter){
     return;
   }
   const sw = sweep;
-  rotBone(RIGB.shR, AX.z, flap * 0.75, AX.y, sw * 0.55);
-  rotBone(RIGB.shL, AX.z, -flap * 0.75, AX.y, -sw * 0.55);
+  // il rig a riposo ha l'ala destra piu' alta della sinistra (~14 gradi): si compensa alle spalle
+  rotBone(RIGB.shR, AX.z, (flap - 0.10) * 0.75, AX.y, sw * 0.55);
+  rotBone(RIGB.shL, AX.z, -(flap + 0.10) * 0.75, AX.y, -sw * 0.55);
   rotBone(RIGB.elR, AX.z, flap * 0.35 - sw * 0.25, AX.y, sw * 0.95);
   rotBone(RIGB.elL, AX.z, -flap * 0.35 + sw * 0.25, AX.y, -sw * 0.95);
   rotBone(RIGB.wrR, AX.z, flap * 0.25, AX.y, sw * 0.8);
@@ -1758,9 +1823,11 @@ function posaGrifone(flap, sweep, legs, roll, pitchIn, flutter){
   const fl = flutter || 0;
   RIGB.tipR.forEach((n, i) => rotBone(n, AX.z, -flap * 0.3 + Math.sin(performance.now() / 90 + i) * fl));
   RIGB.tipL.forEach((n, i) => rotBone(n, AX.z, flap * 0.3 - Math.sin(performance.now() / 90 + i + 1) * fl));
-  const lg = (1 - legs) * 1.15;
+  // zampe: in volo raccolte indietro sotto la coda; in atterraggio portate avanti e giu',
+  // sotto il corpo, con le dita aperte (ginocchio che si distende)
+  const lg = (1 - legs) * 1.15 - legs * 0.9;
   rotBone(RIGB.hipR, AX.x, lg); rotBone(RIGB.hipL, AX.x, lg);
-  rotBone(RIGB.kneeR, AX.x, (1 - legs) * 0.6); rotBone(RIGB.kneeL, AX.x, (1 - legs) * 0.6);
+  rotBone(RIGB.kneeR, AX.x, (1 - legs) * 0.6 - legs * 0.25); rotBone(RIGB.kneeL, AX.x, (1 - legs) * 0.6 - legs * 0.25);
   const r = roll || 0, pi = pitchIn || 0;
   rotBone(RIGB.neck, AX.y, -r * 0.35, AX.x, -pi * 0.25);
   rotBone(RIGB.head, AX.y, -r * 0.25, AX.z, r * 0.2);
@@ -1783,7 +1850,7 @@ function buildGrifone(){
     scene.add(grifP);
     grifP.updateMatrixWorld(true);
     // quote di contatto per questo modello (pancia ~0.35 sotto l'origine, piedi ~1.5 sotto)
-    FC.AGL_MIN = 1.1; FC.H_TERRA = 1.55;
+    FC.AGL_MIN = 1.1; FC.H_TERRA = 1.72;
     buildSkirt();
     return;
   }
@@ -1834,10 +1901,18 @@ function flyStart(){
   // si parte dalla vetta del Cafornia, prua verso Magliano: chi vuole picchiare
   // ha subito tutta la valle davanti
   const caf = (route.peaks || []).find(p => /cafornia/i.test(p.n));
-  if (caf) FLY.pos.set(caf.x, caf.z + 45, -caf.y);
-  else { posAt(st.s, tmpA); FLY.pos.set(tmpA.x, tmpA.y + 70, tmpA.z); }
-  posAt(0, tmpA);
-  FLY.yaw = Math.atan2(tmpA.x - FLY.pos.x, tmpA.z - FLY.pos.z);
+  if (st.s > 500 || !caf) {
+    // Lino e' gia' in cammino: il grifone parte da dove sta lui, 60 m sopra il suolo, lungo il sentiero
+    posAt(st.s, tmpA); tanAt(st.s, tmpB);
+    const gt = terraVera(tmpA.x, tmpA.z, tmpA.y);
+    FLY.pos.set(tmpA.x, Math.max(tmpA.y, gt > -1e3 ? gt : tmpA.y) + 60, tmpA.z);
+    FLY.yaw = Math.atan2(tmpB.x, tmpB.z);
+  } else {
+    // appena partiti: dalla vetta del Cafornia, prua su Magliano (tutta la valle davanti)
+    FLY.pos.set(caf.x, caf.z + 45, -caf.y);
+    posAt(0, tmpA);
+    FLY.yaw = Math.atan2(tmpA.x - FLY.pos.x, tmpA.z - FLY.pos.z);
+  }
   FLY.pitch = FC.PITCH_GLIDE; FLY.roll = 0; FLY.v = 22; FLY.pitchV = 0; FLY.rollV = 0;
   FLY.stall = false; FLY.flap = false; FLY.flapPow = 0; FLY.vario = 0;
   FLY.mode = 'volo'; FLY.tT = 0; FLY.fold = 0; FLY.flapHold = 0; FLY.tumble = null;
@@ -2697,12 +2772,13 @@ function tickPeaks(dt){
       let vic = 1;
       if (FLY.on) { const dg = FLY.pos.distanceTo(g.position); vic = clamp((dg - 50) / 110, 0, 1); }
       g.userData.lbl.material.opacity = o * vic;
-      g.userData.asta.material.opacity = 0.5 * vic;
-      g.userData.flag.material.opacity = 0.62 * vic;
+      g.userData.asta.material.opacity = 0.85 * vic;
+      g.userData.flag.material.opacity = 0.95 * vic;
+      if (g.userData.punta) g.userData.punta.material.opacity = 0.95 * vic;
       const s2 = clamp(d * 0.11, 44, 190);
       const hh = s2 * 0.1875;
       g.userData.lbl.scale.set(hh * (g.userData.lbl.userData.aspect || 5.33), hh, 1);
-      g.userData.flag.rotation.y = Math.sin(performance.now() / 1400 + g.position.x) * 0.7;
+      // (la bandiera sventola nel vertex shader)
     }
   }
 }
