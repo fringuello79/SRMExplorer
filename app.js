@@ -287,6 +287,9 @@ async function boot(){
     try { arredaCase(g.scene); } catch (e) { console.warn('facciate maglianoC:', e); }
     // arco di partenza: i piloni erano 0,3-0,9 m sopra l'asfalto; si annega di 1 m
     { const arco = g.scene.getObjectByName('ArcoSRM'); if (arco) arco.position.y -= 1.0; }
+    // tigli davanti al Comune (oggetti Tiglio* del blend di Ale): chioma con vento e tinta d'autunno
+    g.scene.traverse(o => { if (o.isMesh && /^Tiglio/.test(o.name || '')) vestiTiglio(o); });
+    try { buildTigli(); } catch (e) { console.warn('tigli:', e); }
   }, undefined, () => console.warn('maglianoC assente'));
   $('load-step').textContent = 'Lino…';
   let lg;
@@ -300,6 +303,7 @@ async function boot(){
   buildPins();
   buildAnimali(loader).catch(e => console.warn('animali:', e));
   buildGEV(loader).catch(e => console.warn('GEV:', e));
+  buildChiesaNives(loader).catch(e => console.warn('chiesa Nives:', e));
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
   try { buildNuvole(); } catch (e) { console.warn('nuvole:', e); }
@@ -327,7 +331,7 @@ async function boot(){
   window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, cam: () => camera, ctrl: () => controls, lino: () => lino, terraV: (x, z, y) => terraVera(x, z, y),
                   look: (p, t) => { camera.position.set(p[0], p[1], p[2]); camTgt.set(t[0], t[1], t[2]); controls.target.copy(camTgt); controls.update(); },
                   y0arco: () => Y0_ARCO, pos: s => { posAt(s, tmpC); return [tmpC.x, tmpC.y, tmpC.z]; }, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
-                  poi: i => openPoi(route.pois[i]), gara: showGara, segui: v => setFollow(v, false),
+                  poi: i => openPoi(route.pois[i]), vetta: n => openPeak(route.peaks.find(p => new RegExp(n, 'i').test(p.n))), gara: showGara, segui: v => setFollow(v, false),
                   anim: () => action ? { t: +action.time.toFixed(3), ts: +mixer.timeScale.toFixed(2),
                                          dur: +action.getClip().duration.toFixed(2) } : null,
                   tracks: () => action ? action.getClip().tracks.map(t => t.name) : [],
@@ -418,6 +422,7 @@ function prepWorld(g){
     }
     if (nm.startsWith('Grif_Meshy')) grifTpl = o;
     if (nm === 'Sevice_Meshy') { window._hutS = o; SEVICE = o; }
+    if (nm === 'Chiesa_Porclaneta' && o.material) { o.material = o.material.clone(); o.material.color.setRGB(0.72, 0.68, 0.63); }
   });
   // copia-ombra del nastro: il nastro e' MeshBasicMaterial (non illuminato,
   // per avere grigio/arancio costanti) e NON puo' ricevere ombre; una copia
@@ -765,8 +770,14 @@ function buildPins(){
     if (moved > 7) return;
     pt.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
     ray.setFromCamera(pt, camera);
+    if ($('modal').classList.contains('on')) { closeModal(); return; }
     const hit = ray.intersectObjects(pinGroup.children, false)[0];
-    if (hit) openPoi(hit.object.userData.poi);
+    if (hit) { openPoi(hit.object.userData.poi); return; }
+    // vette: si tocca l'etichetta o la bandierina
+    const cand = [];
+    for (const g of peakItems) if (g.visible && g.userData.lbl.material.opacity > 0.05) cand.push(g.userData.lbl, g.userData.flag, g.userData.asta);
+    const hp = ray.intersectObjects(cand, false)[0];
+    if (hp) { let g = hp.object; while (g && !g.userData.peak) g = g.parent; if (g) openPeak(g.userData.peak); }
   });
 }
 
@@ -1010,9 +1021,49 @@ function openCard(html){
   } catch (e) { console.error('openCard:', e); }
 }
 function closeModal(){ $('modal').classList.remove('on'); }
-function openPoi(p){
-  openCard('<h2>' + p.nome + '</h2><h3>km ' + p.km.toFixed(1).replace('.', ',') + ' · ' + p.sub + '</h3><p>' + p.card + '</p>');
+// ---- natura lungo il percorso: dalla Guida naturalistica SRM 2026 (Studio di Incidenza
+// Ambientale, Dr. B. Petriccione) e dal Piano di gestione della Riserva Naturale Orientata
+// Monte Velino. Testi per chi corre o cammina, senza gergo.
+const NATURA = [
+  { a: 0, b: 10, hab: 'Praterie secche e colline coltivate (habitat 6210*, prioritario)',
+    txt: 'Prati magri su calcare, fra i più ricchi di orchidee spontanee dell\'Appennino: in maggio-giugno fioriscono, in ottobre sono bruni e silenziosi. Verso Passo Le Forche il sentiero sfiora un bosco di roverella, la quercia dei versanti caldi, senza mai attraversarlo. Nelle conche fresche il pioppo tremulo in autunno vira al giallo acceso: se lo vedi, lì sotto c\'è acqua.',
+    fauna: 'Coturnice e lupo appenninico frequentano i valloni laterali e ti eviteranno molto prima che tu li veda. Alza lo sguardo: i grifoni passano anche qui.' },
+  { a: 10, b: 15, hab: 'Praterie di cresta (habitat 6170) e, alla Capanna, i nardeti (6230*, prioritario)',
+    txt: 'Sulle creste del Rozza l\'erba è fatta di piante durissime, abituate a vento, gelo e siccità: resistono a tutto tranne che al calpestio fuori sentiero. Cento metri intorno al rifugio ospitano un nardeto, un pascolo d\'altura che l\'Europa considera a rischio: il ristoro sta apposta sull\'area già nuda davanti alla capanna. Poco prima del rifugio, a bordo sentiero, cinquanta piante di adonide ricurva: fiorisce a inizio estate e non esiste in nessun altro luogo al mondo se non su queste montagne.',
+    fauna: 'Il grifone (reintrodotto nel 1994, oggi circa 250 individui) sfrutta le correnti delle creste: da qui in su è l\'incontro più probabile della giornata. Una coppia di aquile reali nidifica in Valle Majelama e caccia su queste creste.' },
+  { a: 15, b: 18.6, hab: 'Pavimenti calcarei (habitat 8240*, prioritario) e rupi',
+    txt: 'Sopra i 2.200 m il suolo quasi scompare. La roccia incisa dall\'acqua ospita cuscinetti compatti di silene e sassifraga, larghi una mano ma vecchi di decenni: basta un piede fuori sentiero per cancellare mezzo secolo di crescita. Corri sulla roccia, non sui cuscinetti. Sulla cresta fra Velino e Cafornia duecento piante di adonide ricurva, endemismo dell\'Appennino centrale.',
+    fauna: 'Le pareti della Val di Teve sono i nidi dei grifoni e del falco pellegrino. Con il sole d\'ottobre volano tutto il giorno.' },
+  { a: 18.6, b: 22, hab: 'Praterie di cresta (6170) sui versanti del Cafornia',
+    txt: 'Creste erbose e ghiaioni: nella breccia in movimento vivono piante che "nuotano" fra i sassi riemergendo ogni volta che vengono sepolte.',
+    fauna: 'Sulle pendici sud del Cafornia vive la vipera dell\'Orsini, la più piccola e mite d\'Europa: mangia cavallette, è schivissima e a metà ottobre è già in letargo. Non la incontrerai.' },
+  { a: 22, b: 30, hab: 'Praterie secche (6210*, prioritario) e campagna di Massa d\'Albe',
+    txt: 'La grande discesa scende dalle praterie di cresta ai prati magri di fondovalle, poi a campi e querceti. Fonte Canale è una sorgente naturale della Riserva. Nel territorio di Massa d\'Albe, ai piedi del Velino, ci sono i resti della città romana di Alba Fucens.',
+    fauna: 'Il branco di lupi del Velino si muove fra Colle Cerretino, Piè di Cafornia e Valle Majelama: sono di casa, ma tu non li vedrai.' }
+];
+const naturaAt = km => NATURA.find(n => km >= n.a && km < n.b) || NATURA[NATURA.length - 1];
+function schedaNatura(km){
+  const n = naturaAt(km);
+  return '<h3 style="margin-top:14px">Natura qui intorno</h3>' +
+    '<p style="font-size:13px;color:var(--ambra);margin-bottom:4px">' + n.hab + '</p>' +
+    '<p>' + n.txt + '</p><p style="margin-top:8px"><b>Chi vive qui.</b> ' + n.fauna + '</p>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026 e Piano di gestione della Riserva Naturale Orientata Monte Velino.</p>';
 }
+function openPoi(p){
+  const km = p.km;
+  // dove sei rispetto alla gara: cancello e ristoro successivi
+  const gts = route.gates || [];
+  const g = gts.find(gg => gg[0] > km + 0.05);
+  let gara = '';
+  if (g) gara += 'Prossimo cancello: km ' + g[0] + ' (' + g[2] + '). ';
+  const rist = route.pois.filter(q => (q.tipo === 'water' || q.tipo === 'ristoro') && q.km > km + 0.05)[0];
+  if (rist) gara += 'Prossimo punto acqua/ristoro: ' + rist.nome + ' al km ' + rist.km.toFixed(1).replace('.', ',') + ' (' + (rist.km - km).toFixed(1).replace('.', ',') + ' km).';
+  const q = Math.round(quotaAt(km * 1000));
+  openCard('<h2>' + p.nome + '</h2><h3>km ' + km.toFixed(1).replace('.', ',') + ' · ' + q + ' m · ' + p.sub + '</h3><p>' + p.card + '</p>' +
+    (gara ? '<p style="margin-top:8px;font-size:13px">' + gara + '</p>' : '') + schedaNatura(km));
+}
+// scheda di una vetta vista dal sentiero (o dal grifone in volo): la stessa dell'atterraggio
+function openPeak(p){ openCard(schedaVetta(p, true)); }
 function showHelp(){
   openCard('<h2>Come si esplora</h2><h3>SRM Explorer</h3><ul>' +
     '<li><b>▶ / ◀</b> (o frecce della tastiera): Lino avanza e torna indietro lungo il percorso; tieni premuto per correre.</li>' +
@@ -1644,7 +1695,7 @@ function buildPeaks(){
     lbl.userData.aspect = pl.aspect;
     lbl.scale.set(20.6 * pl.aspect, 20.6, 1);
     g.add(asta, punta, flag, lbl);
-    g.userData = { lbl, flag, asta, punta };
+    g.userData = { lbl, flag, asta, punta, peak: p };
     // sul Velino c'e' la croce di vetta (modello GEV): niente asta ne' bandiera, solo l'etichetta
     if (/velino|cafornia/i.test(p.n)) { asta.visible = punta.visible = flag.visible = false; lbl.position.y = 62; }
     grp.add(g); peakItems.push(g);
@@ -1905,10 +1956,18 @@ async function buildGEV(loader){
     const grp3 = new THREE.Group(); grp3.name = 'Idrofano_Sevice';
     g3.scene.scale.setScalar(S3); g3.scene.position.y = 0.952 * S3;    // piede in appoggio a terra
     // roccia sotto il piede destro alzato (suola a z -0,534 del modello, x -0,33, y_blender +0,05)
-    const roccia = new THREE.Mesh(new THREE.DodecahedronGeometry(0.26, 1),
-      new THREE.MeshStandardMaterial({ color: 0x9a948a, roughness: 1, metalness: 0 }));
-    roccia.scale.set(1.3, 0.85, 1.1);
-    roccia.position.set(-0.33, -0.952 + 0.20, -0.05);
+    // masso calcareo: dodecaedro suddiviso e sformato con rumore, spigoli vivi, faccia superiore piatta
+    const rg = new THREE.DodecahedronGeometry(0.26, 2);
+    { const pa = rg.getAttribute('position'); let sd = 7;
+      const rnd = () => (sd = (sd * 16807) % 2147483647) / 2147483647;
+      for (let i = 0; i < pa.count; i++) {
+        const x = pa.getX(i), y = pa.getY(i), z = pa.getZ(i);
+        const k = 0.86 + 0.28 * Math.abs(Math.sin(x * 9.1 + z * 7.3) * Math.cos(y * 11.7)) + (rnd() - 0.5) * 0.16;
+        pa.setXYZ(i, x * k * 1.35, Math.min(y * k, 0.20), z * k * 1.05);
+      }
+      pa.needsUpdate = true; rg.computeVertexNormals(); }
+    const roccia = new THREE.Mesh(rg, new THREE.MeshStandardMaterial({ color: 0x8e8a82, roughness: 1, metalness: 0, flatShading: true }));
+    roccia.position.set(-0.33, -0.952 + 0.22, -0.05);
     roccia.castShadow = true; roccia.receiveShadow = true;
     g3.scene.add(roccia);
     // guarda il sentiero: il modello guarda +Z (glTF)
@@ -1921,6 +1980,87 @@ async function buildGEV(loader){
     const gf = terraVera(tmpD.x, tmpD.z, tmpD.y + 5);
     if (gf > -1e3) grp3.position.y += gf - tmpD.y;
   } catch (e) { console.warn('Idrofano:', e); }
+}
+
+// ---------- tigli: chioma verde/gialla di inizio autunno che ondeggia (per i Tiglio* di Ale e per quelli procedurali) ----------
+function vestiTiglio(o){
+  const chioma = /chioma|foglie|leaf|crown/i.test((o.material && o.material.name) || '') || !/tronco|trunk/i.test(o.name);
+  if (!chioma) return;
+  const m = o.material = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0, vertexColors: false });
+  m.customProgramCacheKey = () => 'tiglio';
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uT = { value: 0 }; VENTO_SH.push(sh);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uT; varying vec3 vLoc; varying float vHn;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+vLoc = (modelMatrix * vec4(position, 1.0)).xyz;
+vHn = position.y;
+{ float fase = modelMatrix[3].x * 0.05 + modelMatrix[3].z * 0.037;
+  float sw = sin(uT * 1.5 + fase + position.y * 0.4) * 0.10 + sin(uT * 2.9 + fase * 1.7 + position.x) * 0.04;
+  transformed.x += sw * 0.6; transformed.z += sw * 0.35; }`);
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vLoc; varying float vHn;\nfloat hh(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  // verde a chiazze con foglie gialle piu' fitte in alto e sui bordi (inizio autunno)
+  float n1 = hh(floor(vLoc * 2.2)), n2 = hh(floor(vLoc * 7.0));
+  vec3 verde = vec3(0.32, 0.46, 0.18) * (0.85 + 0.3 * n2);
+  vec3 giallo = vec3(0.86, 0.72, 0.22) * (0.9 + 0.2 * n2);
+  float aut = smoothstep(0.45, 0.85, n1 * 0.7 + 0.3 * clamp(vHn * 0.35, 0.0, 1.0));
+  diffuseColor.rgb = mix(verde, giallo, aut);
+}`);
+  };
+  o.castShadow = true;
+}
+// tigli procedurali davanti al Comune (finche' Ale non li posiziona nel blend): tronco + 3 chiome
+function tiglioProcedurale(x, z, h){
+  const g = new THREE.Group(); g.name = 'Tiglio_proc';
+  const tr = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.34, h * 0.45, 7), new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 1 }));
+  tr.position.y = h * 0.225; tr.castShadow = true; g.add(tr);
+  const geo = new THREE.IcosahedronGeometry(1, 2);
+  { const pa = geo.getAttribute('position'); for (let i = 0; i < pa.count; i++) { const k = 0.85 + 0.3 * Math.abs(Math.sin(pa.getX(i) * 5.0 + pa.getZ(i) * 3.0) * Math.cos(pa.getY(i) * 4.0)); pa.setXYZ(i, pa.getX(i) * k, pa.getY(i) * k, pa.getZ(i) * k); } pa.needsUpdate = true; geo.computeVertexNormals(); }
+  for (const [dx, dy, dz, r] of [[0, 0.62, 0, 0.36], [0.22, 0.48, 0.12, 0.28], [-0.2, 0.5, -0.14, 0.26], [0.02, 0.8, 0.05, 0.24]]) {
+    const c = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ name: 'chioma' }));
+    c.name = 'Tiglio_chioma'; c.position.set(dx * h, dy * h, dz * h); c.scale.setScalar(r * h);
+    vestiTiglio(c); g.add(c);
+  }
+  const gy = terraVera(x, z, 40);
+  g.position.set(x, gy > -1e3 ? gy : 0, z);
+  return g;
+}
+function buildTigli(){
+  // se il blend di Ale ha gia' dei Tiglio*, niente procedurali
+  let ci = 0; scene.traverse(o => { if (/^Tiglio/.test(o.name || '') && o.name !== 'Tiglio_proc') ci++; });
+  if (ci) return;
+  const com = scene.getObjectByName('Comune_Meshy');
+  if (!com) return;
+  const bb = new THREE.Box3().setFromObject(com);
+  const cx = (bb.min.x + bb.max.x) / 2, cz = (bb.min.z + bb.max.z) / 2;
+  // quattro tigli in fila sul lato della piazza, a 9 m dal fronte del Comune
+  posAt(60, tmpA);
+  const dx = tmpA.x - cx, dz = tmpA.z - cz, L = Math.hypot(dx, dz) || 1, ux = dx / L, uz = dz / L;
+  for (let i = -1.5; i <= 1.5; i += 1) {
+    const px = cx + ux * ((bb.max.x - bb.min.x) / 2 + 9) - uz * i * 7, pz = cz + uz * ((bb.max.z - bb.min.z) / 2 + 9) + ux * i * 7;
+    scene.add(tiglioProcedurale(px, pz, 9 + (i + 1.5) * 0.4));
+  }
+}
+
+// ---------- chiesa di Santa Maria ad Nives (Meshy decimato, 80k tri) al posto della torre stilizzata ----------
+async function buildChiesaNives(loader){
+  const g = await loadGLB(loader, 'assets/chiesa_nives.glb?' + VER, () => {});
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; } } });
+  // via la torre + croce stilizzate di borghi.glb
+  let px = -1375, pz = 4611;
+  scene.traverse(o => { if (o.isMesh && (o.name === 'Borghi_8' || o.name === 'Borghi_9')) { o.visible = false; if (o.name === 'Borghi_8') { o.geometry.computeBoundingBox(); const c = o.geometry.boundingBox.getCenter(tmpC); o.localToWorld(c); px = c.x; pz = c.z; } } });
+  // torre alta ~22 m: il modello e' alto 1,9 unita'; fronte del modello = +z
+  const S = 22 / 1.9;
+  const gy = terraVera(px, pz, 30);
+  const grp = new THREE.Group(); grp.name = 'Chiesa_Nives';
+  g.scene.scale.setScalar(S); g.scene.position.y = 0.953 * S;
+  posAt(350, tmpA);
+  g.scene.rotation.y = Math.atan2(tmpA.x - px, tmpA.z - pz);     // facciata verso la strada
+  grp.add(g.scene); grp.position.set(px, (gy > -1e3 ? gy : 10) - 0.3, pz);
+  scene.add(grp);
 }
 
 // ---------- suono sintetizzato (Web Audio, nessun file): vento, battito, tocco, botta ----------
@@ -2556,7 +2696,7 @@ const PEAK_INFO = {
   'Monte della Maddalena': ['La collina che chiude a ovest la conca di Magliano de\u2019 Marsi, dalla parte opposta al Velino.',
     'Dalla sua cima si vede tutto il giro: il paese, le colline di Rosciolo e, dietro, l\u2019intero massiccio.']
 };
-function schedaVetta(p){
+function schedaVetta(p, daSentiero){
   const info = PEAK_INFO[p.n] || ['Una delle cime del gruppo del Velino.', ''];
   const px = p.x, pz = -p.y;
   // quanto si domina Magliano e quanto è lontana in linea d'aria
@@ -2589,13 +2729,16 @@ function schedaVetta(p){
   if (p.e >= 2000) fascia = 'Sopra i 2.000 m: praterie d\u2019altitudine e pietraie, il terreno di caccia dei grifoni, che qui planano sfruttando le ascendenze dei versanti al sole.';
   else if (p.e >= 1400) fascia = 'Siamo nella fascia della faggeta, che sul Velino sale fin verso i 1.800 m prima di lasciare il posto ai pascoli.';
   else fascia = 'Colline di querceti, coltivi e pascoli: la campagna che circonda Magliano e i borghi ai piedi del massiccio.';
-  return '<h2>' + p.n + '</h2><h3>' + p.e.toLocaleString('it-IT') + ' m · sei atterrato in vetta</h3>' +
+  const nat = naturaAt(km);
+  return '<h2>' + p.n + '</h2><h3>' + p.e.toLocaleString('it-IT') + ' m' + (daSentiero ? ' · vetta' : ' · sei atterrato in vetta') + '</h3>' +
     '<p>' + info[0] + '</p>' + (info[1] ? '<p style="margin-top:8px">' + info[1] + '</p>' : '') +
     '<table><tr><th>Sopra Magliano</th><td>' + disl.toLocaleString('it-IT') + ' m di dislivello, ' + dMag.toFixed(1).replace('.', ',') + ' km in linea d\u2019aria</td></tr>' +
     '<tr><th>La gara</th><td>' + gara + '</td></tr>' +
     '<tr><th>Vette vicine</th><td>' + vic + '</td></tr>' +
     '<tr><th>Ambiente</th><td>' + fascia + '</td></tr></table>' +
-    '<p style="margin-top:12px;color:var(--grigio);font-size:13px">Tieni premuto <b>BATTI</b> (o SPAZIO) per decollare; da un pendio ripido basta la picchiata.</p>';
+    '<p style="margin-top:10px;font-size:13px"><b>Natura.</b> ' + nat.txt.split('. ').slice(0, 2).join('. ') + '.</p>' +
+    '<p style="margin-top:6px;font-size:13px"><b>Chi vive qui.</b> ' + nat.fauna + '</p>' +
+    (daSentiero ? '' : '<p style="margin-top:12px;color:var(--grigio);font-size:13px">Tieni premuto <b>BATTI</b> (o SPAZIO) per decollare; da un pendio ripido basta la picchiata.</p>');
 }
 function tickTerra(dt){
   const f = FLY;
