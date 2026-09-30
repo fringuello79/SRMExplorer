@@ -422,7 +422,24 @@ function prepWorld(g){
     }
     if (nm.startsWith('Grif_Meshy')) grifTpl = o;
     if (nm === 'Sevice_Meshy') { window._hutS = o; SEVICE = o; }
-    if (nm === 'Chiesa_Porclaneta' && o.material) { o.material = o.material.clone(); o.material.color.setRGB(0.72, 0.68, 0.63); }
+    if (nm === 'Chiesa_Porclaneta' && o.material) {
+      // la texture Meshy e' scura: si schiarisce verso il tono delle case, con una leggera
+      // patina calda da pietra antica (curva gamma + tinta, niente triangoli in piu')
+      const m = o.material = o.material.clone();
+      m.color.setRGB(1, 1, 1);
+      m.customProgramCacheKey = () => 'porclaneta';
+      m.onBeforeCompile = sh => {
+        sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+{
+  vec3 c = diffuseColor.rgb;
+  float l = dot(c, vec3(0.299, 0.587, 0.114));
+  c = pow(c, vec3(0.55)) * 1.25;                       // schiarisce come l'intonaco delle case
+  vec3 antica = vec3(0.86, 0.80, 0.68);                 // pietra/calce anticata
+  c = mix(c, antica * (0.75 + 0.5 * pow(l, 0.5)), 0.45);
+  diffuseColor.rgb = clamp(c, 0.0, 1.0);
+}`);
+      };
+    }
   });
   // copia-ombra del nastro: il nastro e' MeshBasicMaterial (non illuminato,
   // per avere grigio/arancio costanti) e NON puo' ricevere ombre; una copia
@@ -1999,14 +2016,20 @@ vHn = position.y;
   float sw = sin(uT * 1.5 + fase + position.y * 0.4) * 0.10 + sin(uT * 2.9 + fase * 1.7 + position.x) * 0.04;
   transformed.x += sw * 0.6; transformed.z += sw * 0.35; }`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vLoc; varying float vHn;\nfloat hh(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }')
+      .replace('#include <common>', `#include <common>
+varying vec3 vLoc; varying float vHn;
+float hh(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+float vn3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(hh(i), hh(i + vec3(1, 0, 0)), f.x), mix(hh(i + vec3(0, 1, 0)), hh(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(hh(i + vec3(0, 0, 1)), hh(i + vec3(1, 0, 1)), f.x), mix(hh(i + vec3(0, 1, 1)), hh(i + vec3(1, 1, 1)), f.x), f.y), f.z); }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 {
-  // verde a chiazze con foglie gialle piu' fitte in alto e sui bordi (inizio autunno)
-  float n1 = hh(floor(vLoc * 2.2)), n2 = hh(floor(vLoc * 7.0));
-  vec3 verde = vec3(0.32, 0.46, 0.18) * (0.85 + 0.3 * n2);
-  vec3 giallo = vec3(0.86, 0.72, 0.22) * (0.9 + 0.2 * n2);
-  float aut = smoothstep(0.45, 0.85, n1 * 0.7 + 0.3 * clamp(vHn * 0.35, 0.0, 1.0));
+  // verde con ciuffi gialli morbidi, piu' fitti in alto (inizio autunno): rumore continuo, niente quadretti
+  float n1 = vn3(vLoc * 1.3) * 0.6 + vn3(vLoc * 3.1) * 0.4;
+  float n2 = vn3(vLoc * 9.0);
+  vec3 verde = vec3(0.30, 0.45, 0.16) * (0.85 + 0.3 * n2);
+  vec3 giallo = vec3(0.84, 0.70, 0.20) * (0.9 + 0.2 * n2);
+  float aut = smoothstep(0.50, 0.72, n1 * 0.75 + 0.25 * clamp(vHn * 0.35, 0.0, 1.0));
   diffuseColor.rgb = mix(verde, giallo, aut);
 }`);
   };
