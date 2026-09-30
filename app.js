@@ -1458,7 +1458,7 @@ function buildPeaks(){
     g.add(asta, punta, flag, lbl);
     g.userData = { lbl, flag, asta, punta };
     // sul Velino c'e' la croce di vetta (modello GEV): niente asta ne' bandiera, solo l'etichetta
-    if (/velino/i.test(p.n)) { asta.visible = punta.visible = flag.visible = false; lbl.position.y = 62; }
+    if (/velino|cafornia/i.test(p.n)) { asta.visible = punta.visible = flag.visible = false; lbl.position.y = 62; }
     grp.add(g); peakItems.push(g);
   }
   scene.add(grp);
@@ -1669,10 +1669,55 @@ async function buildGEV(loader){
   g.scene.position.y = -PIEDI * S;          // il piano dei piedi va all'origine del gruppo
   g.scene.rotation.y = Math.PI;             // volti a nord
   grp.add(g.scene);
-  grp.position.set(tx, top + 0.2, tz);
+  grp.position.set(tx, top + 2.0, tz);      // +40 cm alla scala delle persone: la roccia emerge un po' di piu'
   scene.add(grp);
   GEV = grp;
   console.log('GEV sul Velino a', tx.toFixed(0), top.toFixed(1), tz.toFixed(0));
+  // Pietro Mattei sul Cafornia, accanto alla croce del Cafornia: base di roccia ritagliata in Blender
+  // (raggio 0,6), persona alta 0,66 unita' -> scala 11,8; piedi a z -0,36 del modello; sguardo a NE
+  try {
+    const caf = (route.peaks || []).find(p => /cafornia/i.test(p.n));
+    if (caf) {
+      const g2 = await loadGLB(loader, 'assets/mattei.glb?' + VER, () => {});
+      g2.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; } } });
+      let top2 = -1e9, x2 = caf.x, z2 = -caf.y;
+      for (let dx = -30; dx <= 30; dx += 6) for (let dz = -30; dz <= 30; dz += 6) {
+        const y = terraVera(caf.x + dx, -caf.y + dz, caf.z + 50);
+        if (y > top2) { top2 = y; x2 = caf.x + dx; z2 = -caf.y + dz; }
+      }
+      const S2 = 11.8, PIEDI2 = -0.36;
+      const grp2 = new THREE.Group(); grp2.name = 'Mattei_Cafornia';
+      g2.scene.scale.setScalar(S2); g2.scene.position.y = -PIEDI2 * S2;
+      // il modello guarda +Z (glTF); nord-est = (+x, -z) in three -> rotazione di 135 gradi su Y
+      g2.scene.rotation.y = Math.PI * 0.75;
+      grp2.add(g2.scene); grp2.position.set(x2, top2 - 0.6, z2);   // i sassi affondano per meta' nella vetta
+      scene.add(grp2);
+    }
+  } catch (e) { console.warn('Mattei:', e); }
+  // Giuseppe Idrofano alla Capanna di Sevice (km 14,7), 22 m a destra del sentiero, volto al percorso;
+  // il piede destro (alzato) poggia su una roccia messa qui sotto; alto 1,9 unita' -> scala 4,1
+  try {
+    const g3 = await loadGLB(loader, 'assets/idrofano.glb?' + VER, () => {});
+    g3.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; } } });
+    const S3 = 4.1;
+    posAt(14650, tmpA); tanAt(14650, tmpB);
+    const px = tmpA.x + tmpB.z * 22, pz = tmpA.z - tmpB.x * 22;
+    posAt(14700, tmpC);
+    const gy = terraVera(px, pz, tmpA.y);
+    const grp3 = new THREE.Group(); grp3.name = 'Idrofano_Sevice';
+    g3.scene.scale.setScalar(S3); g3.scene.position.y = 0.952 * S3;    // piede in appoggio a terra
+    // roccia sotto il piede destro alzato (suola a z -0,534 del modello, x -0,33, y_blender +0,05)
+    const roccia = new THREE.Mesh(new THREE.DodecahedronGeometry(0.26, 1),
+      new THREE.MeshStandardMaterial({ color: 0x9a948a, roughness: 1, metalness: 0 }));
+    roccia.scale.set(1.3, 0.85, 1.1);
+    roccia.position.set(-0.33, -0.952 + 0.20, -0.05);
+    roccia.castShadow = true; roccia.receiveShadow = true;
+    g3.scene.add(roccia);
+    // guarda il sentiero: il modello guarda +Z (glTF)
+    g3.scene.rotation.y = Math.atan2(tmpC.x - px, tmpC.z - pz);
+    grp3.add(g3.scene); grp3.position.set(px, gy > -1e3 ? gy : tmpA.y, pz);
+    scene.add(grp3);
+  } catch (e) { console.warn('Idrofano:', e); }
 }
 
 // ---------- suono sintetizzato (Web Audio, nessun file): vento, battito, tocco, botta ----------
