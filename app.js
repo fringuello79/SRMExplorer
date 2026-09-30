@@ -255,6 +255,7 @@ async function boot(){
       }
     });
     scene.add(g.scene);
+    try { arredaCase(g.scene); } catch (e) { console.warn('facciate borghi:', e); }
   }, undefined, () => console.warn('borghi assente'));
   // centro di Magliano curato a mano (magliano_centro.blend -> export_magliano.py)
   loader.load('assets/maglianoC.glb?' + VER, g => {
@@ -265,6 +266,7 @@ async function boot(){
       }
     });
     scene.add(g.scene);
+    try { arredaCase(g.scene); } catch (e) { console.warn('facciate maglianoC:', e); }
   }, undefined, () => console.warn('maglianoC assente'));
   $('load-step').textContent = 'Lino…';
   let lg;
@@ -1381,6 +1383,141 @@ function colorizeTrail(mesh){
 }
 
 
+// ---------- facciate e tetti delle case: finestre, porte, zoccolo, tegole — tutto nel shader ----------
+// Le case sono scatole (muri) + falde (tetti). Per ogni parete verticale si calcola una volta, in JS,
+// un sistema di coordinate locale (u lungo la parete, v in altezza) e le dimensioni della parete;
+// il fragment shader dispone finestre e porte per piano e per campata, senza tagli agli spigoli,
+// e aggiunge zoccolo, intonaco variato per parete e tegole sulle falde. Zero triangoli in piu'.
+const CASE_SH = [];
+function arredaCase(root){
+  const isMuro = m => /^muro|^TB_int|intonaco/i.test(m.name || '');
+  const isTetto = m => /^tetto|^TB_roof|roof/i.test(m.name || '');
+  const N = new THREE.Vector3(), P = new THREE.Vector3(), Q = new THREE.Vector3(), R = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  root.traverse(o => {
+    if (!o.isMesh || !o.material) return;
+    const muro = isMuro(o.material), tetto = isTetto(o.material);
+    if (!muro && !tetto) return;
+    let g = o.geometry;
+    if (g.index) { g = g.toNonIndexed(); o.geometry = g; }
+    const pos = g.getAttribute('position'), nv = pos.count;
+    const aUV = new Float32Array(nv * 2), aWall = new Float32Array(nv * 3);
+    if (muro) {
+      // raggruppa i triangoli per piano (normale + offset) = una parete
+      const groups = new Map(), tri = [];
+      const m = o.matrixWorld;
+      for (let i = 0; i < nv; i += 3) {
+        P.fromBufferAttribute(pos, i).applyMatrix4(m); Q.fromBufferAttribute(pos, i + 1).applyMatrix4(m); R.fromBufferAttribute(pos, i + 2).applyMatrix4(m);
+        N.copy(Q).sub(P).cross(R.clone().sub(P));
+        if (N.lengthSq() < 1e-9) { tri.push(null); continue; }
+        N.normalize();
+        if (Math.abs(N.y) > 0.35) { tri.push(null); continue; }      // non e' una parete verticale
+        const d = N.dot(P);
+        const key = Math.round(N.x * 20) + '_' + Math.round(N.z * 20) + '_' + Math.round(d / 0.25);
+        let gr = groups.get(key);
+        if (!gr) { gr = { n: N.clone(), t: new THREE.Vector3(N.z, 0, -N.x).normalize(), umin: 1e9, umax: -1e9, vmin: 1e9, vmax: -1e9, tris: [] }; groups.set(key, gr); }
+        for (const W of [P, Q, R]) { const u = W.dot(gr.t), v = W.y; if (u < gr.umin) gr.umin = u; if (u > gr.umax) gr.umax = u; if (v < gr.vmin) gr.vmin = v; if (v > gr.vmax) gr.vmax = v; }
+        gr.tris.push(i); tri.push(gr);
+      }
+      let gid = 0;
+      for (const gr of groups.values()) {
+        gr.id = (gid++ * 0.618 + o.position.x * 0.013 + o.position.z * 0.017) % 1;
+      }
+      for (let i = 0; i < nv; i += 3) {
+        const gr = tri[i / 3];
+        for (let k = 0; k < 3; k++) {
+          const j = i + k;
+          if (!gr) { aWall[j * 3] = 0; aWall[j * 3 + 1] = 0; aWall[j * 3 + 2] = 0; continue; }
+          P.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld);
+          aUV[j * 2] = P.dot(gr.t) - gr.umin; aUV[j * 2 + 1] = P.y - gr.vmin;
+          aWall[j * 3] = gr.umax - gr.umin; aWall[j * 3 + 1] = gr.vmax - gr.vmin; aWall[j * 3 + 2] = gr.id;
+        }
+      }
+    }
+    g.setAttribute('aUV', new THREE.BufferAttribute(aUV, 2));
+    g.setAttribute('aWall', new THREE.BufferAttribute(aWall, 3));
+    const mat = o.material = o.material.clone();
+    // three mette in cache i programmi per testo di onBeforeCompile: muro e tetto hanno lo stesso
+    // testo sorgente, quindi serve una chiave esplicita o il tetto riusa il programma del muro
+    mat.customProgramCacheKey = () => muro ? 'casa-muro' : 'casa-tetto';
+    mat.onBeforeCompile = sh => {
+      CASE_SH.push(sh);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute vec2 aUV; attribute vec3 aWall; varying vec2 vUVc; varying vec3 vWall; varying vec3 vWp; varying float vNyc;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvUVc = aUV; vWall = aWall; vWp = (modelMatrix * vec4(position, 1.0)).xyz; vNyc = normalize(mat3(modelMatrix) * normal).y;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+varying vec2 vUVc; varying vec3 vWall; varying vec3 vWp; varying float vNyc;
+float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float nz2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hsh(i), hsh(i + vec2(1, 0)), f.x), mix(hsh(i + vec2(0, 1)), hsh(i + vec2(1, 1)), f.x), f.y); }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  ${muro ? `
+  float W = vWall.x, H = vWall.y, id = vWall.z;
+  if (W > 1.5 && H > 2.0) {
+    vec3 col = diffuseColor.rgb;
+    // intonaco: tinta leggermente diversa per parete, grana e macchie di umido in basso
+    col *= 0.94 + 0.12 * hsh(vec2(id, 0.3));
+    col *= 0.96 + 0.08 * nz2(vUVc * 2.3 + id * 10.0);
+    // zoccolo di pietra/cemento sotto i 0,9 m
+    float zoc = 1.0 - smoothstep(0.85, 0.95, vUVc.y);
+    col = mix(col, vec3(0.62, 0.60, 0.56) * (0.9 + 0.2 * nz2(vUVc * 6.0)), zoc * 0.9);
+    // piani e campate
+    float piano = 3.0;
+    float nP = max(1.0, floor((H - 0.4) / piano));
+    float nW = max(1.0, floor(W / 3.4));
+    float cellW = W / nW;
+    float cx = floor(vUVc.x / cellW), fx = vUVc.x - cx * cellW;      // campata e posizione nella campata
+    float py = floor(vUVc.y / piano), fy = vUVc.y - py * piano;        // piano e altezza nel piano
+    float hw = hsh(vec2(id * 37.0 + cx, py));                         // caso per finestra
+    if (py < nP) {
+      float ww = 1.15, wh = 1.45, wb = 0.95;                             // finestra: larghezza, altezza, davanzale
+      bool porta = (py == 0.0) && (cx == floor(hsh(vec2(id, 7.0)) * nW));
+      if (porta) { ww = 1.15; wh = 2.25; wb = 0.0; }
+      float dx = abs(fx - cellW * 0.5), dyc = fy - wb;
+      bool dentro = dx < ww * 0.5 && dyc > 0.0 && dyc < wh;
+      bool cornice = dx < ww * 0.5 + 0.13 && dyc > -0.13 && dyc < wh + 0.13;
+      if (hw > 0.12 || porta) {
+        if (dentro) {
+          if (porta) col = vec3(0.30, 0.20, 0.12) * (0.85 + 0.3 * nz2(vec2(fx * 8.0, fy * 2.0)));   // legno
+          else {
+            // vetro scuro con riflesso del cielo e traversa
+            vec3 vetro = mix(vec3(0.10, 0.13, 0.18), vec3(0.45, 0.55, 0.68), smoothstep(0.2, 1.4, dyc) * 0.6);
+            float trav = step(abs(dx - 0.0), 0.04) + step(abs(dyc - wh * 0.5), 0.04);
+            col = mix(vetro, vec3(0.85, 0.83, 0.78), clamp(trav, 0.0, 1.0));
+            // persiane socchiuse su alcune finestre
+            if (hsh(vec2(cx + 3.0, py + id * 5.0)) > 0.62) col = vec3(0.30, 0.42, 0.32) * (0.78 + 0.35 * step(0.55, fract(dyc * 4.5)));
+          }
+        } else if (cornice) {
+          col = porta ? vec3(0.55, 0.52, 0.48) : vec3(0.90, 0.88, 0.84);
+        }
+        // ombra del davanzale
+        if (!porta && dx < ww * 0.5 + 0.13 && dyc < -0.13 && dyc > -0.30) col *= 0.75;
+      }
+    }
+    // cornicione: banda chiara sotto il tetto
+    if (H - vUVc.y < 0.35) col = mix(col, vec3(0.92, 0.90, 0.86), 0.7);
+    diffuseColor.rgb = col;
+  }` : `
+  // tetto: tegole (file lungo la pendenza) su falde inclinate, grana sui tetti piani
+  vec3 col = diffuseColor.rgb;
+  float pend = 1.0 - smoothstep(0.97, 0.995, abs(vNyc));
+  // tinta coccio piu' decisa, file di tegole (ogni ~38 cm di quota lungo la falda) con l'ombra di ciascuna
+  col = mix(col, col * vec3(1.0, 0.72, 0.56), 0.6);
+  float filo = fract(vWp.y * 2.6 + nz2(vWp.xz * 1.3) * 0.06);
+  float tegola = smoothstep(0.0, 0.18, filo) * (1.0 - smoothstep(0.62, 1.0, filo));
+  float colonne = 0.9 + 0.1 * step(0.5, fract((vWp.x + vWp.z) * 3.0));
+  col *= mix(1.0, (0.58 + 0.5 * tegola) * colonne, pend) * (0.90 + 0.18 * nz2(vWp.xz * 3.1));
+  col *= 0.90 + 0.2 * hsh(floor(vWp.xz / 6.0));
+  // colmo chiaro
+  col = mix(col, col * 1.15, pend * smoothstep(0.985, 1.0, abs(vNyc)));
+  diffuseColor.rgb = col;`}
+}`);
+    };
+  });
+}
+
 // ---------- bandierine fantasma delle vette ----------
 let peakItems = [], peakT = 0;
 function peakLabel(nome, quota){
@@ -1666,9 +1803,17 @@ async function buildGEV(loader){
   }
   const grp = new THREE.Group(); grp.name = 'GEV_Velino';
   g.scene.scale.setScalar(S);
-  g.scene.position.y = -PIEDI * S;          // il piano dei piedi va all'origine del gruppo
   g.scene.rotation.y = Math.PI;             // volti a nord
-  grp.add(g.scene);
+  // base della croce (x 0,20, z -0,30 nel modello glTF -> dopo la rotazione di 180: x -0,20, z +0,30):
+  // e' il perno attorno a cui il gruppo e' girato di 10 gradi in senso orario (visto dall'alto),
+  // con la croce che resta perfettamente verticale
+  const perno = new THREE.Group();
+  const bx = -0.20 * S, bz = 0.30 * S;
+  g.scene.position.set(-bx, -PIEDI * S, -bz);   // il piano dei piedi va all'origine, la croce sul perno
+  perno.position.set(bx, 0, bz);
+  perno.rotation.y = -THREE.MathUtils.degToRad(10);
+  perno.add(g.scene);
+  grp.add(perno);
   grp.position.set(tx, top + 2.0, tz);      // +40 cm alla scala delle persone: la roccia emerge un po' di piu'
   scene.add(grp);
   GEV = grp;
