@@ -276,6 +276,7 @@ async function boot(){
     prepGrifRig(gr);
   } catch (e) { console.warn('grifone riggato assente, uso il Meshy statico:', e); }
   buildPins();
+  buildAnimali(loader).catch(e => console.warn('animali:', e));
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
   try { buildNuvole(); } catch (e) { console.warn('nuvole:', e); }
@@ -1538,6 +1539,81 @@ async function loadVeg(loader){
   console.log('vegetazione:', Object.keys(veg.inst).map(k => k + ':' + veg.inst[k].length).join(', '));
 }
 
+// ---------- animali riggati (Meshy, animati per ossa): lupo ai pratoni e cervo in Valle Porclaneta ----------
+// Idle procedurale: respiro, testa che si guarda intorno, coda, orecchie. I modelli guardano -x.
+const ANIMALI = [];
+function facciaVerso(model, x, z, tx, tz){ return Math.atan2(tz - z, -(tx - x)); }
+async function buildAnimali(loader){
+  const defs = [
+    { file: 'lupo.glb', nome: 'Lupo_Rig', scale: 2.7, at: 'lupo',
+      ossa: { spine: 'Bone_030', neck: 'Bone_040', neck2: 'Bone_037', head: 'Bone_034', tail: 'Bone_009', tail2: 'Bone_006', earL: 'Bone_066', earR: 'Bone_063' },
+      amp: { headYaw: 0.35, tailYaw: 0.22, tailPitch: 0.1, breathe: 0.025, ear: 0.15 } },
+    { file: 'cervo.glb', nome: 'Cervo_Rig', scale: 4.4, at: 'cervo',
+      ossa: { spine: 'Bone_003', neck: 'Bone_010', neck2: 'Bone_009', head: 'Bone_007', tail: 'Bone_024', tail2: 'Bone_023', earL: 'Bone_038', earR: 'Bone_036' },
+      amp: { headYaw: 0.3, tailYaw: 0.05, tailPitch: 0.4, breathe: 0.02, ear: 0.3 } }
+  ];
+  for (const d of defs) {
+    let g;
+    try { g = await loadGLB(loader, 'assets/' + d.file + '?' + VER, () => {}); } catch (e) { console.warn(d.file, 'assente'); continue; }
+    const bones = {}; g.scene.traverse(o => { if (o.isBone) bones[o.name] = o; if (o.isSkinnedMesh) { o.frustumCulled = false; o.castShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.9; } } });
+    const rest = new Map(); for (const b of Object.values(bones)) rest.set(b, b.quaternion.clone());
+    const grp = new THREE.Group(); grp.name = d.nome; grp.add(g.scene); g.scene.scale.setScalar(d.scale);
+    let px, pz, tx, tz;
+    if (d.at === 'lupo') {
+      // ai pratoni (km 26,3), 36 m a destra del sentiero, rivolto verso chi arriva
+      posAt(25600, tmpA); tanAt(25600, tmpB);
+      px = tmpA.x - tmpB.z * 40; pz = tmpA.z + tmpB.x * 40;
+      posAt(25500, tmpA); tx = tmpA.x; tz = tmpA.z;
+    } else {
+      // cervo al margine del bosco di Valle Porclaneta, 28 m a sinistra del sentiero
+      posAt(7800, tmpA); tanAt(7800, tmpB);
+      px = tmpA.x - tmpB.z * 28; pz = tmpA.z + tmpB.x * 28;
+      posAt(7900, tmpA); tx = tmpA.x; tz = tmpA.z;
+    }
+    const gy = terraVera(px, pz, 0);
+    grp.position.set(px, gy > -1e3 ? gy : groundAt(px, pz), pz);
+    grp.rotation.y = facciaVerso(null, px, pz, tx, tz);
+    scene.add(grp);
+    grp.updateMatrixWorld(true);
+    ANIMALI.push({ def: d, grp, bones, rest, root: g.scene, ph: Math.random() * 100 });
+  }
+}
+// rotazione di un osso attorno a un asse del modello (stessa formula di rotBone, ma per un rig qualsiasi)
+function rotBoneA(an, name, axis, ang, extraAxis, extraAng){
+  const b = an.bones[name]; if (!b) return;
+  qP.identity(); const chain = [];
+  for (let p = b.parent; p && p !== an.root; p = p.parent) chain.push(p);
+  for (let i = chain.length - 1; i >= 0; i--) qP.multiply(chain[i].quaternion);
+  qA.setFromAxisAngle(axis, ang);
+  if (extraAxis) { qI.setFromAxisAngle(extraAxis, extraAng); qA.multiply(qI); }
+  qI.copy(qP).invert();
+  b.quaternion.copy(qI).multiply(qA).multiply(qP).multiply(an.rest.get(b));
+}
+let animT = 0;
+function tickAnimali(dt){
+  if (!ANIMALI.length) return;
+  animT += dt;
+  for (const an of ANIMALI) {
+    // solo se abbastanza vicino alla camera (fluidita'): oltre 600 m resta fermo
+    if (camera.position.distanceTo(an.grp.position) > 600) continue;
+    const o = an.def.ossa, A = an.def.amp, t = animT + an.ph;
+    // testa: lenta rotazione con pause (rumore a bassa frequenza), + guarda in giu' ogni tanto (brucare)
+    const look = Math.sin(t * 0.35) * 0.6 + Math.sin(t * 0.13 + 1) * 0.4;
+    const graze = an.def.at === 'cervo' ? clamp(Math.sin(t * 0.09) * 3 - 1.5, 0, 1) : 0;
+    rotBoneA(an, o.neck, AX.y, look * A.headYaw * 0.5, AX.z, graze * 0.45);
+    rotBoneA(an, o.neck2, AX.y, look * A.headYaw * 0.3, AX.z, graze * 0.35);
+    rotBoneA(an, o.head, AX.y, look * A.headYaw * 0.4, AX.z, graze * 0.3 + Math.sin(t * 0.7) * 0.03);
+    // respiro
+    rotBoneA(an, o.spine, AX.z, Math.sin(t * 2.2) * A.breathe);
+    // coda
+    rotBoneA(an, o.tail, AX.y, Math.sin(t * 1.6) * A.tailYaw, AX.x, (Math.sin(t * 5.0) > 0.92 ? 1 : 0) * A.tailPitch);
+    rotBoneA(an, o.tail2, AX.y, Math.sin(t * 1.6 + 0.8) * A.tailYaw * 0.8);
+    // orecchie: scatti
+    const e1 = Math.sin(t * 3.3) > 0.9 ? 1 : 0, e2 = Math.sin(t * 2.7 + 2) > 0.9 ? 1 : 0;
+    rotBoneA(an, o.earL, AX.z, e1 * A.ear); rotBoneA(an, o.earR, AX.z, -e2 * A.ear);
+  }
+}
+
 // ---------- suono sintetizzato (Web Audio, nessun file): vento, battito, tocco, botta ----------
 const SND = { ctx: null, on: true, wind: null, windG: null, windF: null, rumb: null, rumbG: null, noise: null, ready: false };
 function sndInit(){
@@ -2499,6 +2575,7 @@ function tick(){
   if (SKY) SKY.position.copy(camera.position);
   if (NUVOLE.length) tickNuvole(dt);
   if (VENTO_SH.length) { const tt = performance.now() / 1000; for (const sh of VENTO_SH) sh.uniforms.uT.value = tt; }
+  tickAnimali(dt);
   if (FLY.on) {
     tickFly(dt);
     if (mixer) mixer.update(0);
@@ -2556,7 +2633,8 @@ function tick(){
   } else if (mixer) { mixer.timeScale = clamp(0.25 + st.speed / 42, 0, 2.6) * (st.speed < 1 ? 0 : 1); mixer.update(dt); }
   // camera
   tanAt(st.s + 8, tmpC);
-  if (st.view === 'fpv') {
+  if (window.SRMX && window.SRMX.freeze) { /* camera bloccata per i collaudi */ }
+  else if (st.view === 'fpv') {
     tmpD.copy(tmpA).addScaledVector(tmpC, 2.5); tmpD.y += 8.8;
     // NIENTE clamp suolo in prima persona: groundAt (griglia coarse) sta
     // sopra la linea del percorso fino a +22 e il vecchio clamp post-lerp
@@ -2579,7 +2657,7 @@ function tick(){
     }
     controls.update();
   }
-  if (st.view !== 'fpv') {
+  if (st.view !== 'fpv' && !(window.SRMX && window.SRMX.freeze)) {
     const gmin = groundAt(camera.position.x, camera.position.z) + 13;
     if (camera.position.y < gmin) camera.position.y = gmin;
   }
