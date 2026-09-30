@@ -269,6 +269,10 @@ async function boot(){
   $('load-step').textContent = 'Lino…';
   const lg = await loadGLB(loader, 'assets/lino.glb?' + VER, p => prog(0.66 + 0.28 * p));
   prepLino(lg);
+  try {
+    const gr = await loadGLB(loader, 'assets/grifone.glb?' + VER, () => {});
+    prepGrifRig(gr);
+  } catch (e) { console.warn('grifone riggato assente, uso il Meshy statico:', e); }
   buildPins();
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
@@ -1606,8 +1610,89 @@ const gEul = new THREE.Euler(0, 0, 0, 'YXZ');
 let skirt = null;
 const isTouch = () => matchMedia('(pointer:coarse)').matches || 'ontouchstart' in window;
 
+// ---------- grifone riggato (Meshy "Sky Sentinel", 43 ossa, animato per ossa in three.js) ----------
+// Mappa delle ossa letta dalle posizioni del rig: prua +z, ali lungo ±x, y in alto.
+const RIGB = {
+  shR: 'Bone_019', elR: 'Bone_018', wrR: 'Bone_017', tipR: ['Bone_032', 'Bone_034', 'Bone_036'],
+  shL: 'Bone_022', elL: 'Bone_021', wrL: 'Bone_020', tipL: ['Bone_038', 'Bone_040', 'Bone_042'],
+  hipR: 'Bone_010', kneeR: 'Bone_009', hipL: 'Bone_007', kneeL: 'Bone_006',
+  neck: 'Bone_016', head: 'Bone_015', tail: 'Bone_004', tail2: 'Bone_003', spine: 'Bone_014'
+};
+let RIG = null;
+const AX = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
+const qA = new THREE.Quaternion(), qP = new THREE.Quaternion(), qI = new THREE.Quaternion();
+function prepGrifRig(g){
+  const bones = {}; let skin = null;
+  g.scene.traverse(o => { if (o.isBone) bones[o.name] = o; if (o.isSkinnedMesh) skin = o; });
+  if (!skin || !bones[RIGB.shR] || !bones[RIGB.shL]) throw new Error('rig del grifone non riconosciuto');
+  skin.frustumCulled = false; skin.castShadow = true;
+  if (skin.material && skin.material.isMeshStandardMaterial) { skin.material.metalness = 0; skin.material.roughness = 0.9; }
+  const rest = new Map();
+  for (const b of Object.values(bones)) rest.set(b, b.quaternion.clone());
+  RIG = { root: g.scene, bones, rest, skin };
+}
+// ruota un osso attorno a un asse dello SPAZIO DEL MODELLO (non a quello locale dell'osso):
+// locale' = P^-1 * Q * P * riposo, con P = rotazione accumulata dei genitori (fino alla radice del rig)
+function rotBone(name, axis, ang, extraAxis, extraAng){
+  const b = RIG.bones[name]; if (!b) return;
+  qP.identity();
+  const chain = [];
+  for (let p = b.parent; p && p !== RIG.root; p = p.parent) chain.push(p);
+  for (let i = chain.length - 1; i >= 0; i--) qP.multiply(chain[i].quaternion);
+  qA.setFromAxisAngle(axis, ang);
+  if (extraAxis) { qI.setFromAxisAngle(extraAxis, extraAng); qA.multiply(qI); }
+  qI.copy(qP).invert();
+  b.quaternion.copy(qI).multiply(qA).multiply(qP).multiply(RIG.rest.get(b));
+}
+// posa completa: flap (angolo, + = ali su), sweep 0..1 (chiuse all'indietro), legs 0..1 (giu'),
+// roll e pitchIn per testa/coda, tremolio delle punte
+function posaGrifone(flap, sweep, legs, roll, pitchIn, flutter){
+  if (!RIG) {
+    if (grifMat && grifMat.userData.sh) {
+      const u = grifMat.userData.sh.uniforms;
+      u.uFlap.value = flap; u.uSweep.value = sweep; u.uLegs.value = legs;
+    }
+    return;
+  }
+  const sw = sweep;
+  rotBone(RIGB.shR, AX.z, flap * 0.75, AX.y, sw * 0.55);
+  rotBone(RIGB.shL, AX.z, -flap * 0.75, AX.y, -sw * 0.55);
+  rotBone(RIGB.elR, AX.z, flap * 0.35 - sw * 0.25, AX.y, sw * 0.95);
+  rotBone(RIGB.elL, AX.z, -flap * 0.35 + sw * 0.25, AX.y, -sw * 0.95);
+  rotBone(RIGB.wrR, AX.z, flap * 0.25, AX.y, sw * 0.8);
+  rotBone(RIGB.wrL, AX.z, -flap * 0.25, AX.y, -sw * 0.8);
+  const fl = flutter || 0;
+  RIGB.tipR.forEach((n, i) => rotBone(n, AX.z, -flap * 0.3 + Math.sin(performance.now() / 90 + i) * fl));
+  RIGB.tipL.forEach((n, i) => rotBone(n, AX.z, flap * 0.3 - Math.sin(performance.now() / 90 + i + 1) * fl));
+  const lg = (1 - legs) * 1.15;
+  rotBone(RIGB.hipR, AX.x, lg); rotBone(RIGB.hipL, AX.x, lg);
+  rotBone(RIGB.kneeR, AX.x, (1 - legs) * 0.6); rotBone(RIGB.kneeL, AX.x, (1 - legs) * 0.6);
+  const r = roll || 0, pi = pitchIn || 0;
+  rotBone(RIGB.neck, AX.y, -r * 0.35, AX.x, -pi * 0.25);
+  rotBone(RIGB.head, AX.y, -r * 0.25, AX.z, r * 0.2);
+  rotBone(RIGB.tail, AX.y, r * 0.45, AX.x, pi * 0.35);
+  rotBone(RIGB.tail2, AX.x, pi * 0.2);
+}
 function buildGrifone(){
-  if (grifP || !grifTpl) return;
+  if (grifP || (!grifTpl && !RIG)) return;
+  if (RIG) {
+    grifP = new THREE.Group(); grifP.name = 'GrifonePilota';
+    const m = RIG.root;
+    // apertura alare del modello 5,35 unita' -> 13 m in scena (come il Meshy statico);
+    // l'origine del modello e' ai piedi: si abbassa perche' l'origine del gruppo sia il corpo
+    const sc = 13 / 5.35;
+    m.scale.setScalar(sc);
+    m.position.set(0, -0.62 * sc, 0);
+    m.rotation.set(0, 0, 0);
+    grifP.add(m);
+    grifP.visible = false;
+    scene.add(grifP);
+    grifP.updateMatrixWorld(true);
+    // quote di contatto per questo modello (pancia ~0.35 sotto l'origine, piedi ~1.5 sotto)
+    FC.AGL_MIN = 1.1; FC.H_TERRA = 1.55;
+    buildSkirt();
+    return;
+  }
   grifP = new THREE.Group(); grifP.name = 'GrifonePilota';
   const m = grifTpl.clone();
   m.geometry = grifTpl.geometry;
@@ -1634,6 +1719,10 @@ function buildGrifone(){
   grifP.add(m);
   grifP.visible = false;
   scene.add(grifP);
+  buildSkirt();
+}
+function buildSkirt(){
+  if (skirt) return;
   // "gonna" del mondo: disco color foschia sotto e oltre il bordo del terreno,
   // così il limite della mappa sfuma nella nebbia invece di mostrare un orlo
   const sk = new THREE.Mesh(new THREE.CircleGeometry(60000, 48),
@@ -1678,7 +1767,7 @@ function flyStart(){
   camTgt.copy(FLY.pos);
   if (!FLY.ready) { FLY.ready = true; bindFlyUI(); }
   sndInit();
-  if (window.SRMX) { window.SRMX.fly = FLY; window.SRMX.flyStop = flyStop; window.SRMX.grifP = grifP; window.SRMX.stepFly = dt => tickFly(dt); }
+  if (window.SRMX) { window.SRMX.fly = FLY; window.SRMX.flyStop = flyStop; window.SRMX.grifP = grifP; window.SRMX.stepFly = dt => tickFly(dt); window.SRMX.rig = RIG; }
   try { location.hash = 'grifone'; } catch (e) {}
 }
 function flyStop(){
@@ -1827,10 +1916,9 @@ function tickTour(dt){
   if (f.flapPow > 0.1) f.flapPh += dt * FC.FLAP_HZ * Math.PI * 2;
   gEul.set(-f.pitch, f.yaw, f.roll, 'YXZ');
   grifP.quaternion.setFromEuler(gEul); grifP.position.copy(f.pos);
-  if (grifMat && grifMat.userData.sh) {
+  {
     const idle = Math.sin(performance.now() / 900) * 0.06 + 0.10;
-    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.flapPow) + Math.sin(f.flapPh) * 0.85 * f.flapPow;
-    grifMat.userData.sh.uniforms.uSweep.value = 0; grifMat.userData.sh.uniforms.uLegs.value = 0;
+    posaGrifone(idle * (1 - f.flapPow) + Math.sin(f.flapPh) * 0.85 * f.flapPow, 0, 0, f.roll, 0, 0.02);
   }
   // camera: piu' arretrata e alta, si vede il percorso
   tmpD.set(Math.sin(f.yaw), 0, Math.cos(f.yaw));
@@ -1961,12 +2049,11 @@ function tickFly(dt){
   gEul.set(-f.pitch, f.yaw, f.roll, 'YXZ');
   grifP.quaternion.setFromEuler(gEul);
   grifP.position.copy(f.pos);
-  if (grifMat && grifMat.userData.sh) {
+  {
     const idle = Math.sin(performance.now() / 900) * 0.06 + 0.10;    // ali leggermente a diedro
     const fl = Math.sin(f.flapPh) * 0.85 * f.flapPow;
-    grifMat.userData.sh.uniforms.uFlap.value = (idle * (1 - f.flapPow) + fl) * (1 - f.fold) - 0.30 * f.fold;
-    grifMat.userData.sh.uniforms.uSweep.value = 1.15 * f.fold;
-    grifMat.userData.sh.uniforms.uLegs.value = f.legs;
+    posaGrifone((idle * (1 - f.flapPow) + fl) * (1 - f.fold) - 0.30 * f.fold, 1.15 * f.fold, f.legs,
+                f.roll, -f.inY, 0.02 + 0.06 * clamp((f.v - 40) / 40, 0, 1));
   }
   // camera d'inseguimento
   const back = 26 + f.v * 0.07;
@@ -2123,12 +2210,11 @@ function tickTerra(dt){
   gEul.set(-f.pitch, f.yaw, f.roll, 'YXZ');
   grifP.quaternion.setFromEuler(gEul);
   grifP.position.copy(f.pos);
-  if (grifMat && grifMat.userData.sh) {
+  {
     const idle = Math.sin(performance.now() / 900) * 0.05 + 0.08;
     // ali chiuse a terra: raccolte all'indietro lungo il corpo e appena abbassate (le punte non devono bucare il suolo)
-    grifMat.userData.sh.uniforms.uFlap.value = idle * (1 - f.fold) - 0.42 * f.fold + (f.flap ? Math.sin(performance.now() / 80) * 0.5 * (1 - f.fold) : 0);
-    grifMat.userData.sh.uniforms.uSweep.value = 1.05 * f.fold;
-    grifMat.userData.sh.uniforms.uLegs.value = f.legs;
+    posaGrifone(idle * (1 - f.fold) - 0.42 * f.fold + (f.flap ? Math.sin(performance.now() / 80) * 0.5 * (1 - f.fold) : 0),
+                1.05 * f.fold, f.legs, 0, 0, 0);
   }
   f.orbit += dt * 0.18;
   const ang = f.yaw + Math.PI + f.orbit;
@@ -2257,7 +2343,7 @@ function tickImpatto(dt){
   if (gt > -1e3) f.pos.y = gt + 2.1 + hop;
   grifP.rotation.x += f.tumble[0] * dt; grifP.rotation.y += f.tumble[1] * dt; grifP.rotation.z += f.tumble[2] * dt;
   grifP.position.copy(f.pos);
-  if (grifMat && grifMat.userData.sh) { grifMat.userData.sh.uniforms.uFlap.value = Math.sin(performance.now() / 60) * 0.9; grifMat.userData.sh.uniforms.uSweep.value = 0; }
+  posaGrifone(Math.sin(performance.now() / 60) * 0.9, 0, 0.5, 0, 0, 0.3);
   // camera alta e arretrata, cosi' il grifone resta in vista anche su un pendio
   tmpB.set(f.pos.x - fwdV.x * 22, f.pos.y + 14, f.pos.z - fwdV.z * 22);
   const cg = terraVera(tmpB.x, tmpB.z, tmpB.y);
