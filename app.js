@@ -148,6 +148,7 @@ async function boot(){
   const world = await loadGLB(loader, 'assets/scene.glb?' + VER, p => prog(0.06 + 0.58 * p));
   prepWorld(world.scene);
   scene.add(world.scene);
+  try { buildTrailHeights(); } catch (e) { console.warn('quote nastro:', e); }
   loadVeg(loader).catch(e => console.warn('vegetazione:', e));
   try {
     const lupoSrc = world.scene.getObjectByName('Lupo_Pratoni');
@@ -218,6 +219,8 @@ async function boot(){
         if (wn) poggia(wn);
       });
       poggia(lupoSrc);
+      // il rifugio di Sevice era sospeso di quasi 3 m: si posa (regola poggia)
+      if (SEVICE) poggia(SEVICE, -0.25);
       // suolo VERO campionato lungo tutto il tratto estrapolato (arco -> km 0)
       try {
         const bers = [];
@@ -246,6 +249,21 @@ async function boot(){
       if (nomiC.includes(o.name)) o.visible = false;
     });
     scene.add(g.scene);
+    // la rastrelliera dei bastoncini (montanti, traversa, bastoncini) era sospesa di 1,1 m: si posa tutta insieme
+    try {
+      const rast = new THREE.Group(); rast.name = 'Rastrelliera';
+      const pezzi = []; g.scene.traverse(o => { if (o.isMesh && /^Ristoro_(mont|bast|traversa)/.test(o.name)) pezzi.push(o); });
+      for (const p of pezzi) rast.attach(p);
+      g.scene.add(rast);
+      // sta su un pendio: si abbassa fino a che il montante piu' a valle tocca (gli altri affondano un po')
+      rast.updateMatrixWorld(true);
+      const bb = new THREE.Box3().setFromObject(rast);
+      let gmin = 1e9;
+      for (const [x, z] of [[bb.min.x, bb.min.z], [bb.max.x, bb.min.z], [bb.min.x, bb.max.z], [bb.max.x, bb.max.z]]) {
+        const gy = terraVera(x, z, bb.max.y); if (gy > -1e3 && gy < gmin) gmin = gy;
+      }
+      if (gmin < 1e8) rast.position.y += gmin - bb.min.y + 0.03;
+    } catch (e) { console.warn('rastrelliera:', e); }
   }, undefined, () => console.warn('extras assente'));
   loader.load('assets/borghi.glb?' + VER, g => {
     g.scene.traverse(o => {
@@ -267,6 +285,8 @@ async function boot(){
     });
     scene.add(g.scene);
     try { arredaCase(g.scene); } catch (e) { console.warn('facciate maglianoC:', e); }
+    // arco di partenza: i piloni erano 0,3-0,9 m sopra l'asfalto; si annega di 1 m
+    { const arco = g.scene.getObjectByName('ArcoSRM'); if (arco) arco.position.y -= 1.0; }
   }, undefined, () => console.warn('maglianoC assente'));
   $('load-step').textContent = 'Lino…';
   let lg;
@@ -304,7 +324,7 @@ async function boot(){
     go.style.display = 'inline-block';
     go.onclick = chiudi;
   }
-  window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, cam: () => camera, ctrl: () => controls, lino: () => lino,
+  window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, cam: () => camera, ctrl: () => controls, lino: () => lino, terraV: (x, z, y) => terraVera(x, z, y),
                   look: (p, t) => { camera.position.set(p[0], p[1], p[2]); camTgt.set(t[0], t[1], t[2]); controls.target.copy(camTgt); controls.update(); },
                   y0arco: () => Y0_ARCO, pos: s => { posAt(s, tmpC); return [tmpC.x, tmpC.y, tmpC.z]; }, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
                   poi: i => openPoi(route.pois[i]), gara: showGara, segui: v => setFollow(v, false),
@@ -397,7 +417,7 @@ function prepWorld(g){
       o.material.metalness = 0; o.material.roughness = 0.9;
     }
     if (nm.startsWith('Grif_Meshy')) grifTpl = o;
-    if (nm === 'Sevice_Meshy') window._hutS = o;
+    if (nm === 'Sevice_Meshy') { window._hutS = o; SEVICE = o; }
   });
   // copia-ombra del nastro: il nastro e' MeshBasicMaterial (non illuminato,
   // per avere grigio/arancio costanti) e NON puo' ricevere ombre; una copia
@@ -470,6 +490,36 @@ function prepLino(lg){
 }
 
 // ---------- percorso ----------
+// Quota dei PIEDI di Lino lungo il tracciato: la linea GPX (route.z) sta 0,4-3 m sopra il nastro
+// disegnato, e Lino sembrava sospeso. YT[i] = quota del nastro SRM_Trail (indice spaziale della
+// mesh) o del terreno vero, campionata a ogni punto del percorso e ammorbidita su +-40 m per
+// togliere gli scalini di pendenza; mai piu' di 3 cm sotto il nastro (i piedi non affondano).
+let YT = null;
+function buildTrailHeights(){
+  let trail = null;
+  scene.traverse(o => { if (!trail && o.isMesh && (o.name || '') === 'SRM_Trail') trail = o; });
+  const TI = trail ? buildTerrIndex(trail, 30) : null;
+  const raw = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = route.x[i], z = -route.y[i];
+    let y = TI ? altezzaIdx(TI, x, z) : -1e4;
+    const gt = terraVera(x, z, route.z[i] + 20);
+    if (y < -1e3 || (gt > -1e3 && y < gt - 2)) y = gt;
+    if (y < -1e3) y = route.z[i];
+    raw[i] = y + 0.04;
+  }
+  const out = new Float32Array(N);
+  const W = 4;                                   // +-4 campioni = +-40 m
+  for (let i = 0; i < N; i++) {
+    let acc = 0, wsum = 0;
+    for (let k = -W; k <= W; k++) {
+      const j = Math.min(N - 1, Math.max(0, i + k)), w = 1 - Math.abs(k) / (W + 1);
+      acc += raw[j] * w; wsum += w;
+    }
+    out[i] = Math.max(acc / wsum, raw[i] - 0.03);
+  }
+  YT = out;
+}
 const S0_ARCO = -15.0;   // partenza sotto l'arco: 15 m prima del km 0 lungo la tangente iniziale
 let Y0_ARCO = null;      // quota del suolo vero sotto l'arco (raycast al caricamento)
 let YEXT = null;         // suolo campionato ogni metro da s=-15 a s=0
@@ -483,7 +533,7 @@ function posAt(s, out){
       const k0 = Math.min(14, Math.floor(f0));
       const yg = YEXT[k0] + (YEXT[k0 + 1] - YEXT[k0]) * (f0 - k0);
       const t0 = clamp(1 + s / 3.0, 0, 1);      // raccordo al nastro solo negli ultimi 3 m
-      y = yg * (1 - t0) + route.z[0] * t0;
+      y = yg * (1 - t0) + (YT ? YT[0] : route.z[0]) * t0;
     } else {
       const t0 = clamp(1 + s / 15.0, 0, 1);
       const yA = (typeof Y0_ARCO === 'number') ? Y0_ARCO : route.z[0];
@@ -493,8 +543,9 @@ function posAt(s, out){
   }
   const f = clamp(s, 0, TOT) / TOT * (N - 1);
   const i = Math.min(Math.floor(f), N - 2), t = f - i;
+  const Z = YT || route.z;
   return out.set(lerp(route.x[i], route.x[i + 1], t),
-                 lerp(route.z[i], route.z[i + 1], t),
+                 lerp(Z[i], Z[i + 1], t),
                 -lerp(route.y[i], route.y[i + 1], t));
 }
 function quotaAt(s){
@@ -1222,7 +1273,7 @@ function skyPalette(nome){
 }
 
 // ---------- ortofoto, griglia altezze, brecciato ----------
-let ORTHO = null, HG = null, sunLight = null, SHADOWS = false, HEMI = null;
+let ORTHO = null, HG = null, sunLight = null, SHADOWS = false, HEMI = null, SEVICE = null;
 const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
 const OC = [0, 0, 0];
 async function loadOrtho(){
@@ -1845,9 +1896,11 @@ async function buildGEV(loader){
     const g3 = await loadGLB(loader, 'assets/idrofano.glb?' + VER, () => {});
     g3.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; } } });
     const S3 = 4.1;
-    posAt(14650, tmpA); tanAt(14650, tmpB);
-    const px = tmpA.x + tmpB.z * 22, pz = tmpA.z - tmpB.x * 22;
-    posAt(14700, tmpC);
+    // quasi attaccato al rifugio, dal lato delle panche (ovest, verso il sentiero)
+    let px, pz;
+    if (SEVICE) { const bb = new THREE.Box3().setFromObject(SEVICE); px = bb.min.x - 2.5; pz = bb.max.z - 3; }
+    else { posAt(14650, tmpA); tanAt(14650, tmpB); px = tmpA.x + tmpB.z * 22; pz = tmpA.z - tmpB.x * 22; }
+    posAt(14650, tmpA); posAt(14650, tmpC);
     const gy = terraVera(px, pz, tmpA.y);
     const grp3 = new THREE.Group(); grp3.name = 'Idrofano_Sevice';
     g3.scene.scale.setScalar(S3); g3.scene.position.y = 0.952 * S3;    // piede in appoggio a terra
@@ -1862,6 +1915,11 @@ async function buildGEV(loader){
     g3.scene.rotation.y = Math.atan2(tmpC.x - px, tmpC.z - pz);
     grp3.add(g3.scene); grp3.position.set(px, gy > -1e3 ? gy : tmpA.y, pz);
     scene.add(grp3);
+    // il piede in appoggio (x 0,154, z -0,233 nel modello) deve toccare il suolo vero in quel punto esatto
+    grp3.updateMatrixWorld(true);
+    tmpD.set(0.154, -0.952, -0.233).applyMatrix4(g3.scene.matrixWorld);
+    const gf = terraVera(tmpD.x, tmpD.z, tmpD.y + 5);
+    if (gf > -1e3) grp3.position.y += gf - tmpD.y;
   } catch (e) { console.warn('Idrofano:', e); }
 }
 
@@ -2604,18 +2662,19 @@ function tickTerra(dt){
 // Indice spaziale dei triangoli della mesh del terreno (celle di 60 m in pianta):
 // il raycast di three su 360k triangoli costa ~100 ms, questo ~0,02 ms.
 let TERR = null, TIDX = null;
-function buildTerrIndex(){
-  scene.traverse(o => { if (!TERR && o.isMesh && (o.name || '').startsWith('Terrain')) TERR = o; });
-  if (!TERR) return null;
-  const g = TERR.geometry, pos = g.getAttribute('position');
-  TERR.updateMatrixWorld(true);
+function buildTerrIndex(mesh, cell){
+  if (!mesh) scene.traverse(o => { if (!TERR && o.isMesh && (o.name || '').startsWith('Terrain')) TERR = o; });
+  const M = mesh || TERR;
+  if (!M) return null;
+  const g = M.geometry, pos = g.getAttribute('position');
+  M.updateMatrixWorld(true);
   const n = pos.count, P = new Float32Array(n * 3), v = new THREE.Vector3();
-  for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(TERR.matrixWorld); P[i * 3] = v.x; P[i * 3 + 1] = v.y; P[i * 3 + 2] = v.z; }
+  for (let i = 0; i < n; i++) { v.fromBufferAttribute(pos, i).applyMatrix4(M.matrixWorld); P[i * 3] = v.x; P[i * 3 + 1] = v.y; P[i * 3 + 2] = v.z; }
   const idx = g.index ? g.index.array : null;
   const nt = idx ? idx.length / 3 : n / 3;
   let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9;
   for (let i = 0; i < n; i++) { const x = P[i * 3], z = P[i * 3 + 2]; if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; }
-  const C = 60, nx = Math.ceil((x1 - x0) / C) + 1, nz = Math.ceil((z1 - z0) / C) + 1;
+  const C = cell || 60, nx = Math.ceil((x1 - x0) / C) + 1, nz = Math.ceil((z1 - z0) / C) + 1;
   const cells = new Array(nx * nz);
   const tri = (t, k) => idx ? idx[t * 3 + k] : t * 3 + k;
   for (let t = 0; t < nt; t++) {
@@ -2629,6 +2688,28 @@ function buildTerrIndex(){
     }
   }
   return { P, tri, x0, z0, C, nx, nz, cells };
+}
+// quota di una mesh indicizzata in (x, z): il triangolo piu' alto che contiene il punto, o -1e4
+function altezzaIdx(T, x, z){
+  const cx = Math.floor((x - T.x0) / T.C), cz = Math.floor((z - T.z0) / T.C);
+  if (cx < 0 || cz < 0 || cx >= T.nx || cz >= T.nz) return -1e4;
+  const list = T.cells[cz * T.nx + cx];
+  if (!list) return -1e4;
+  const P = T.P;
+  let best = -1e4;
+  for (const t of list) {
+    const a = T.tri(t, 0), b = T.tri(t, 1), c = T.tri(t, 2);
+    const xa = P[a * 3], za = P[a * 3 + 2], xb = P[b * 3], zb = P[b * 3 + 2], xc = P[c * 3], zc = P[c * 3 + 2];
+    const d = (zb - zc) * (xa - xc) + (xc - xb) * (za - zc);
+    if (Math.abs(d) < 1e-9) continue;
+    const l1 = ((zb - zc) * (x - xc) + (xc - xb) * (z - zc)) / d;
+    const l2 = ((zc - za) * (x - xc) + (xa - xc) * (z - zc)) / d;
+    const l3 = 1 - l1 - l2;
+    if (l1 < -1e-4 || l2 < -1e-4 || l3 < -1e-4) continue;
+    const y = l1 * P[a * 3 + 1] + l2 * P[b * 3 + 1] + l3 * P[c * 3 + 1];
+    if (y > best) best = y;
+  }
+  return best;
 }
 function terraVera(x, z, yHint){
   const gg = groundAt(x, z);
