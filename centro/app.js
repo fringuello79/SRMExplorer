@@ -341,8 +341,14 @@ function buildMotivoPiazza(){
 }
 // ---------- Lino ----------
 async function buildLino(loader){
-  const g = await loadGLB(loader, 'assets/lino2.glb?' + VER);
+  // Lino 2 e' l'asset dell'Explorer (cartella assets/ del repository)
+  let g = null;
+  try { g = await loadGLB(loader, '../assets/lino2.glb?' + VER); } catch (e) { console.warn('lino2.glb non trovato: segnaposto', e); }
   lino = new THREE.Group(); lino.name = 'Lino';
+  if (!g) {   // segnaposto: capsula arancione, cosi' si cammina comunque
+    const cap = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, LINO_H - 0.6, 6, 12), new THREE.MeshStandardMaterial({ color: '#f2a900' })); cap.position.y = LINO_H / 2; cap.castShadow = true; lino.add(cap); scene.add(lino);
+    ST.x = -1596; ST.z = 4871; ST.yaw = Math.atan2(FINISH_P[0] - ST.x, FINISH_P[1] - ST.z); return;
+  }
   g.scene.traverse(o => { if (o.isMesh || o.isSkinnedMesh) { o.castShadow = true; o.frustumCulled = false; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.85; } } });
   g.scene.scale.setScalar(LINO_H / 1.7);
   lino.add(g.scene); scene.add(lino);
