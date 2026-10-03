@@ -235,14 +235,14 @@ async function buildMunicipio(loader){
   const inner = new THREE.Group(); inner.rotation.y = -MA; inner.add(g.scene);     // assi del modello allineati a x/z
   const mid = new THREE.Group();
   // u (corto, profondita') -> lato corto OSM; v (lungo, facciata) -> lato lungo OSM; altezza: gronda ~13,5 m + tetto
-  mid.scale.set(lati[1] / MU, 15.5 / MH, lati[0] / MV);
+  mid.scale.set(lati[1] / MU, 12.5 / MH, lati[0] / MV);   // due piani + cornicione + tetto: ~12,5 m al colmo
   mid.add(inner);
   const outer = new THREE.Group(); outer.name = 'Municipio';
   outer.rotation.y = best.a + (best.w > best.d ? Math.PI / 2 : 0) + MUNI_FLIP * Math.PI;
   const y = Math.min(...poly.map(p => demAt(p[0], p[1])));
   outer.position.set(c[0], y + 0.2, c[1]); outer.add(mid); scene.add(outer);
   MUNI = { grp: outer, c, poly };
-  EDIFICI.push({ grp: outer, poly: poly.map(p => [p[0], p[1]]), c, nome: 'Palazzo comunale', tipo: 'municipio', lv: 3, h: 15.5, id: e.id, yb: y });
+  EDIFICI.push({ grp: outer, poly: poly.map(p => [p[0], p[1]]), c, nome: 'Palazzo comunale', tipo: 'municipio', lv: 2, h: 12.5, id: e.id, yb: y });
 }
 let MUNI_FLIP = 1;   // 0/1: facciata verso Via Santa Maria di Loreto (sud-ovest) — si verifica a vista
 // ---------- tigli (modello di Ale) sui filari OSM ----------
@@ -297,16 +297,21 @@ async function buildPercorso(){
   const n = r.x.length; const vicino = i => Math.hypot(r.x[i] - C[0], -r.y[i] - C[1]) < 330;
   let a0 = 0; while (a0 < n && vicino(a0)) a0++;          // tratto iniziale
   let b0 = n - 1; while (b0 >= 0 && vicino(b0)) b0--;     // tratto finale
+  // il "gancio" GPS verso l'angolo nord del Municipio si toglie: il tracciato nuovo resta su Via
+  // Dalmazia fino all'incrocio con Via Santa Maria di Loreto (come disegnato da Ale)
+  const STACCO = [-1557, 4813];
+  const piuVicino = (i0, i1) => { let bi = i0, bd = 1e9; for (let i = i0; i <= i1; i++) { const d = Math.hypot(r.x[i] - STACCO[0], -r.y[i] - STACCO[1]); if (d < bd) { bd = d; bi = i; } } return bi; };
+  const ia = piuVicino(0, a0), ib = piuVicino(b0, n - 1);
   const matR = new THREE.MeshStandardMaterial({ color: '#f2a900', roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
   const matP = new THREE.MeshStandardMaterial({ color: '#ff5a1f', roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
   const grp = new THREE.Group(); grp.name = 'Percorso';
-  grp.add(nastro(seg(0, a0), 1.6, 0.12, matR, 'percorso andata'));
-  grp.add(nastro(seg(b0, n - 1), 1.6, 0.12, matR, 'percorso ritorno'));
-  // prolungamento proposto: dalla fine attuale (angolo nord del Municipio) lungo Via Dalmazia fino
-  // all'incrocio con Via Santa Maria di Loreto, poi a sinistra fino davanti alla facciata
-  const fine = [r.x[n - 1], -r.y[n - 1]];
-  const ext = [fine, [-1583, 4853], [-1592, 4861.5], [-1597.5, 4868.5], [-1591, 4876], FINISH_P];
-  grp.add(nastro(ext, 1.6, 0.14, matP, 'prolungamento proposto'));
+  grp.add(nastro(seg(ia, a0), 1.6, 0.12, matR, 'percorso andata'));
+  grp.add(nastro(seg(b0, ib), 1.6, 0.12, matR, 'percorso ritorno'));
+  // nuovo finale (e, al contrario, nuova partenza): da Via Dalmazia all'incrocio con Via Santa Maria
+  // di Loreto, poi a sinistra fino a meta' della facciata del Palazzo comunale
+  const stacco = [r.x[ib], -r.y[ib]];
+  const ext = [stacco, [-1581, 4844], [-1593, 4861], [-1598, 4868.5], [-1593.5, 4874], FINISH_P];
+  grp.add(nastro(ext, 1.6, 0.14, matP, 'nuovo finale'));
   // traguardo: arco sottile e scritta
   const arco = new THREE.Group(); arco.name = 'Traguardo';
   const colMat = new THREE.MeshStandardMaterial({ color: '#f3efe2', roughness: 0.6 });
@@ -326,7 +331,7 @@ function buildMotivoPiazza(){
   for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; const d = Math.hypot(m[0] - FINISH_P[0], m[1] - FINISH_P[1]); if (d < bestD) { bestD = d; bestI = i; } }
   const a = poly[bestI], b = poly[(bestI + 1) % poly.length]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
   const dx = FINISH_P[0] - m[0], dz = FINISH_P[1] - m[1]; const dn = Math.hypot(dx, dz);
-  const cx = m[0] + dx / dn * 7, cz = m[1] + dz / dn * 7;
+  const cx = m[0] + dx / dn * 5, cz = m[1] + dz / dn * 5;      // a meta' fra la facciata e la scalinata (piazza larga ~10 m)
   const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.6, 48), new THREE.MeshStandardMaterial({ color: '#b9b0a0', roughness: 1, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
   ring.rotation.x = -Math.PI / 2; ring.position.set(cx, demAt(cx, cz) + 0.12, cz); ring.name = 'MotivoCircolare'; scene.add(ring);
   const r2 = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.9, 32), ring.material); r2.rotation.x = -Math.PI / 2; r2.position.set(cx, demAt(cx, cz) + 0.12, cz); scene.add(r2);
@@ -381,7 +386,7 @@ function tocca(cx, cy){
   let o = hit.object; while (o && !EDIFICI.find(e => e.grp === o)) o = o.parent;
   const e = EDIFICI.find(x => x.grp === o); if (!e) return;
   const nome = e.tipo === 'municipio' ? 'Palazzo comunale' : e.nome || (e.tipo === 'chiesa' ? 'Chiesa' : 'Edificio');
-  $('card-b').innerHTML = '<h2>' + nome + '</h2><p>' + (e.tipo === 'municipio' ? 'Modello Meshy di Ale posato sull’impronta OpenStreetMap (16 × 35 m). Facciata su Via Santa Maria di Loreto: scalinata, lampioni a tre globi, arcate al piano terra.' :
+  $('card-b').innerHTML = '<h2>' + nome + '</h2><p>' + (e.tipo === 'municipio' ? 'Modello Meshy di Ale posato sull’impronta OpenStreetMap (16 × 35 m). Palazzo «Universitas Malleani»: due piani, arcate e portale al piano terra, loggia centrale a tre arcate con balcone, piazza rialzata con ringhiera in ferro battuto, scalinata centrale e lampioni a tre globi.' :
     'Impronta da OpenStreetMap (way ' + e.id + '); ' + (e.lv ? e.lv + (e.lv > 1 ? ' piani' : ' piano') : '') + ', altezza stimata ' + e.h.toFixed(1) + ' m' + (e.nome ? '' : '. Facciata e colore sono provvisori: da sostituire con il rilievo fotografico.')) + '</p>';
   $('card').classList.add('on');
 }
@@ -453,4 +458,5 @@ async function main(){
   window.CENTRO = { scene, camera, ST, CAM, EDIFICI, demAt, lino: () => lino, muni: () => MUNI, flip: v => { MUNI_FLIP = v; } };
   tick();
 }
-main().catch(e => { console.error(e); $('ltxt').textContent = 'Errore: ' + e.message; });
+main().catch(e => { console.error(e); $('ltxt').innerHTML = 'Errore: ' + e.message + (location.protocol === 'file:' ? '<br><br>La pagina va aperta da un server locale, non dal disco:<br>fai doppio clic su <b>centro\\avvia.bat</b> (oppure <i>python -m http.server</i> nella cartella del repository e apri <i>http://localhost:8000/centro/</i>).' : ''); });
+if (location.protocol === 'file:') $('ltxt').innerHTML = 'Apri la pagina da un server locale: doppio clic su <b>centro\\avvia.bat</b>.';
