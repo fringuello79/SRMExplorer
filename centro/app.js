@@ -11,6 +11,10 @@ const $ = id => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const ELEV_A = 0.8948, ELEV_B = 726.2;         // quota reale = a*y + b (come nell'Explorer)
 const LINO_H = 1.8;                             // Lino a scala reale (nel paese)
+// georeferenziazione della scena (georef.json dell'Explorer): scena -> lat/lon
+const GEO = { lat0: 42.13, lon0: 13.37, tx: 1029.368076098098, ty: 749.0292175110861, th: 0.01993193494256239, s: 0.9972072023897438 };
+function three2ll(x, z){ const bx = x, by = -z; const c = Math.cos(GEO.th), sn = Math.sin(GEO.th); const E = GEO.s * (c * bx - sn * by) + GEO.tx, N = GEO.s * (sn * bx + c * by) + GEO.ty; return [GEO.lat0 + N / 110574, GEO.lon0 + E / (Math.cos(GEO.lat0 * Math.PI / 180) * 111320)]; }
+let ORTO = null, ORTO_TEX = null, MAT_TETTO_ORTO = null;   // { lat0, lat1, lon0, lon1 } dell'ortofoto del centro (assets/orto_centro.jpg), se presente
 
 let renderer, scene, camera, sun, DATA, DEM, lino = null, mixer = null, ACT = {}, clock = new THREE.Clock();
 const VENTO = [];
@@ -126,6 +130,22 @@ function buildTerreno(){
       .replace('#include <map_fragment>', `#include <map_fragment>
 { vec4 a = texture2D(tAsf, vMapUv * 2.0); a.rgb *= vec3(1.08, 1.06, 1.0); diffuseColor.rgb = mix(diffuseColor.rgb, a.rgb, vUrb); }`);
   };
+  if (ORTO) {
+    // ortofoto reale (PCN 2012): uv dalla lat/lon di ogni vertice; fuori dall'ortofoto resta la miscela prato/asfalto
+    const uvo = new Float32Array(N * N * 2);
+    for (let k = 0; k < N * N; k++) { const ll = three2ll(pos.getX(k), pos.getZ(k)); uvo[k * 2] = (ll[1] - ORTO.lon0) / (ORTO.lon1 - ORTO.lon0); uvo[k * 2 + 1] = (ll[0] - ORTO.lat0) / (ORTO.lat1 - ORTO.lat0); }
+    g.setAttribute('uvo', new THREE.BufferAttribute(uvo, 2));
+    const tex = ORTO_TEX;
+    const prev = m.onBeforeCompile;
+    m.onBeforeCompile = sh => { prev(sh); sh.uniforms.tOrto = { value: tex };
+      sh.vertexShader = sh.vertexShader.replace('attribute float urb; varying float vUrb;', 'attribute float urb; varying float vUrb; attribute vec2 uvo; varying vec2 vUvo;').replace('vUrb = urb;', 'vUrb = urb; vUvo = uvo;');
+      sh.fragmentShader = sh.fragmentShader.replace('uniform sampler2D tAsf; varying float vUrb;', 'uniform sampler2D tAsf; varying float vUrb; uniform sampler2D tOrto; varying vec2 vUvo;')
+        .replace('diffuseColor.rgb = mix(diffuseColor.rgb, a.rgb, vUrb); }', `diffuseColor.rgb = mix(diffuseColor.rgb, a.rgb, vUrb);
+  float inO = step(0.0, vUvo.x) * step(vUvo.x, 1.0) * step(0.0, vUvo.y) * step(vUvo.y, 1.0);
+  float bordo = smoothstep(0.0, 0.04, min(min(vUvo.x, 1.0 - vUvo.x), min(vUvo.y, 1.0 - vUvo.y)));
+  vec4 o = texture2D(tOrto, vUvo); o.rgb = pow(o.rgb, vec3(0.95)) * 1.05;
+  diffuseColor.rgb = mix(diffuseColor.rgb, o.rgb, inO * bordo); }`); };
+  }
   const t = new THREE.Mesh(g, m); t.receiveShadow = true; t.name = 'Terreno'; scene.add(t);
 }
 // nastro piatto che segue il terreno (strade), largo w, con uv lungo l'asse
@@ -246,9 +266,12 @@ function buildEdifici(){
     const shape = new THREE.Shape(poly.map(p => new THREE.Vector2(p[0], p[1])));
     const gT = new THREE.ShapeGeometry(shape); gT.rotateX(Math.PI / 2);   // nel piano xz, normale -y: si capovolge
     const pt = gT.getAttribute('position'); for (let k = 0; k < pt.count; k++) pt.setY(k, yb + H + 0.05);
-    const uvT = gT.getAttribute('uv'); for (let k = 0; k < uvT.count; k++) uvT.setXY(k, pt.getX(k) / 1.2, pt.getZ(k) / 1.2);
+    const uvT = gT.getAttribute('uv');
+    // con l'ortofoto, il tetto prende la sua immagine vera dall'alto (colore, abbaini, lucernari); altrimenti tegole
+    if (ORTO_TEX) { for (let k = 0; k < uvT.count; k++) { const ll = three2ll(pt.getX(k), pt.getZ(k)); uvT.setXY(k, (ll[1] - ORTO.lon0) / (ORTO.lon1 - ORTO.lon0), (ll[0] - ORTO.lat0) / (ORTO.lat1 - ORTO.lat0)); } }
+    else for (let k = 0; k < uvT.count; k++) uvT.setXY(k, pt.getX(k) / 1.2, pt.getZ(k) / 1.2);
     gT.computeVertexNormals();
-    const tetto = new THREE.Mesh(gT, new THREE.MeshStandardMaterial({ map: TEX_TEG, roughness: 1, side: THREE.DoubleSide })); tetto.castShadow = true; tetto.receiveShadow = true;
+    const tetto = new THREE.Mesh(gT, ORTO_TEX ? MAT_TETTO_ORTO : new THREE.MeshStandardMaterial({ map: TEX_TEG, roughness: 1, side: THREE.DoubleSide })); tetto.castShadow = true; tetto.receiveShadow = true;
     gE.add(tetto);
     // cornicione
     const corn = new THREE.Mesh(gT.clone(), new THREE.MeshStandardMaterial({ color: '#d9d2c2', roughness: 1, side: THREE.DoubleSide })); corn.position.y = -0.35; corn.scale.set(1, 1, 1); gE.add(corn);
@@ -579,6 +602,8 @@ async function main(){
   const prog = (f, t) => { $('lbar').style.width = Math.round(f * 100) + '%'; if (t) $('ltxt').textContent = t; };
   buildStage();
   DATA = await (await fetch('assets/centro.json?' + VER)).json(); DEM = DATA.dem; prog(0.15, 'terreno…');
+  try { const r = await fetch('assets/orto_centro.json?' + VER); if (r.ok) ORTO = await r.json(); } catch (e) {}
+  if (ORTO) { ORTO_TEX = new THREE.TextureLoader().load('assets/orto_centro.jpg?' + VER); ORTO_TEX.colorSpace = THREE.SRGBColorSpace; ORTO_TEX.anisotropy = 8; MAT_TETTO_ORTO = new THREE.MeshStandardMaterial({ map: ORTO_TEX, roughness: 1, side: THREE.DoubleSide }); }
   buildTerreno(); prog(0.25, 'strade e piazze…');
   buildStrade(); prog(0.35, 'edifici…');
   buildEdifici(); prog(0.55, 'Municipio, tigli, Lino…');
