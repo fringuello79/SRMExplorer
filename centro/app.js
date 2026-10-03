@@ -277,7 +277,7 @@ float vn3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   const matTronco = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 1, metalness: 0 });
   g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.material = /tronco/i.test(o.name) ? matTronco : matChioma; } });
   const grp = new THREE.Group(); grp.name = 'Alberi'; let n = 0;
-  const posa = (x, z, k) => { const t = g.scene.clone(true); const s = 0.8 + 0.3 * hash(k); t.scale.setScalar(s); t.rotation.y = hash(k + 7) * Math.PI * 2; t.position.set(x, demAt(x, z), z); grp.add(t); n++; };
+  const posa = (x, z, k) => { const t = g.scene.clone(true); const s = 0.58 + 0.14 * hash(k); t.scale.set(s * 0.85, s, s * 0.85); /* tigli potati del viale: ~7 m, chioma contenuta */ t.rotation.y = hash(k + 7) * Math.PI * 2; t.position.set(x, demAt(x, z), z); grp.add(t); n++; };
   for (const a of DATA.alberi) {
     if (a.p) { posa(a.p[0], a.p[1], n); continue; }
     const f = a.fila; let acc = 0;
@@ -414,7 +414,7 @@ function tick(){
     const nx = ST.x + Math.sin(ST.yaw) * ST.v * dt, nz = ST.z + Math.cos(ST.yaw) * ST.v * dt;
     if (!bloccato(nx, nz)) { ST.x = nx; ST.z = nz; } else ST.v = 0;
     const y = demAt(ST.x, ST.z);
-    lino.position.set(ST.x, y, ST.z); lino.rotation.y = ST.yaw;
+    lino.position.set(ST.x, y, ST.z); lino.rotation.y = ST.yaw - Math.PI / 2;   // il modello guarda verso +x
     if (mixer) {
       const sp = Math.abs(ST.v); const wW = sp < 0.05 ? 0 : clamp(1 - (sp - 1.5) / 1.5, 0, 1), wR = clamp((sp - 1.5) / 1.5, 0, 1);
       const k = 1 - Math.exp(-6 * dt);
