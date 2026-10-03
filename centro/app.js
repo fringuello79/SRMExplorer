@@ -162,10 +162,33 @@ function buildStrade(){
   scene.add(grp);
 }
 // ---------- edifici: pareti con finestre per piano, tetto a falde basse ----------
-let TEX_MURI = [], TEX_PT = null, TEX_TEG = null;
+let TEX_MURI = [], TEX_PT = null, TEX_TEG = null, TEX_MATTONI = null, TEX_PIETRA = null;
+// colori e materiali delle facciate letti dalle foto di Street View (ott. 2025): punto in scena + raggio
+const OVERRIDE_COL = [
+  { p: [-1541, 4897], r: 14, col: '#ffffff', mattoni: true },   // casa d'angolo in mattoni faccia a vista, lato est di Via S. Maria di Loreto
+  { p: [-1590, 4927], r: 12, col: '#e8a27a' },                  // casa color salmone, lato ovest
+  { p: [-1552, 4960], r: 12, col: '#f6f3ec' },                  // casa bianca d'angolo del bar (Via Fiume / SS578), balconi
+  { p: [-1572, 4958], r: 10, col: '#f3efe4' },                  // edificio basso della macelleria
+  { p: [-1614, 4851], r: 12, col: '#e9a06a' }                   // casa arancio con tetto a padiglione, incrocio Via Massa d'Albe
+];
+function texMattoni(){
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256; const g = cv.getContext('2d');
+  g.fillStyle = '#c9c2b4'; g.fillRect(0, 0, 256, 256);
+  for (let y = 0; y < 256; y += 12) for (let x = -24; x < 256; x += 24) { const ox = (y / 12 % 2) * 12; g.fillStyle = `hsl(${12 + Math.random() * 10},${50 + Math.random() * 15}%,${38 + Math.random() * 10}%)`; g.fillRect(x + ox + 1, y + 1, 22, 10); }
+  // finestra con cornice bianca
+  g.fillStyle = '#efece4'; g.fillRect(84, 52, 88, 126); g.fillStyle = '#2b3540'; g.fillRect(92, 60, 72, 110); g.fillStyle = 'rgba(255,255,255,0.15)'; g.fillRect(96, 64, 30, 50);
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+}
+function texPietra(){
+  // opus incertum come il muro della piazza del Municipio
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256; const g = cv.getContext('2d');
+  g.fillStyle = '#8d8578'; g.fillRect(0, 0, 256, 256);
+  for (let i = 0; i < 120; i++) { const x = Math.random() * 256, y = Math.random() * 256, r = 14 + Math.random() * 16; g.fillStyle = `hsl(${30 + Math.random() * 15},${12 + Math.random() * 12}%,${52 + Math.random() * 20}%)`; g.beginPath(); for (let k = 0; k < 7; k++) { const a = k / 7 * Math.PI * 2; g.lineTo(x + Math.cos(a) * r * (0.7 + Math.random() * 0.5), y + Math.sin(a) * r * (0.7 + Math.random() * 0.5)); } g.closePath(); g.fill(); }
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
+}
 const PALETTE = ['#f4efe4', '#efe3c9', '#e9d3a8', '#f1d7c0', '#eadfd6', '#dcd6c8', '#f3e6c0', '#e5c9a2', '#f0e9dc', '#e8c7b4'];
 function buildEdifici(){
-  TEX_MURI = [texMuro(0.2), texMuro(0.8)]; TEX_PT = texPianoTerra(); TEX_TEG = texTegole();
+  TEX_MURI = [texMuro(0.2), texMuro(0.8)]; TEX_PT = texPianoTerra(); TEX_TEG = texTegole(); TEX_MATTONI = texMattoni(); TEX_PIETRA = texPietra();
   const grp = new THREE.Group(); grp.name = 'Edifici';
   const PIANO = 3.2;
   for (const e of DATA.edifici) {
@@ -180,9 +203,11 @@ function buildEdifici(){
     // quota di base: il punto piu' basso dell'impronta; le pareti scendono 2,5 m sotto per i pendii
     let yb = 1e9; for (const p of poly) yb = Math.min(yb, demAt(p[0], p[1]));
     const seme = hash(e.id);
-    const col = e.tipo === 'chiesa' ? '#efe8dc' : PALETTE[Math.floor(seme * PALETTE.length)];
-    const matMuro = new THREE.MeshStandardMaterial({ map: TEX_MURI[seme > 0.5 ? 1 : 0], color: col, roughness: 0.92, metalness: 0 });
-    const matPT = new THREE.MeshStandardMaterial({ map: TEX_PT, color: col, roughness: 0.92, metalness: 0 });
+    const ov = OVERRIDE_COL.find(o => Math.hypot(o.p[0] - c[0], o.p[1] - c[1]) < o.r);
+    const col = ov ? ov.col : e.tipo === 'chiesa' ? '#efe8dc' : PALETTE[Math.floor(seme * PALETTE.length)];
+    const mattoni = ov && ov.mattoni;
+    const matMuro = new THREE.MeshStandardMaterial({ map: mattoni ? TEX_MATTONI : TEX_MURI[seme > 0.5 ? 1 : 0], color: col, roughness: 0.92, metalness: 0 });
+    const matPT = new THREE.MeshStandardMaterial({ map: mattoni ? TEX_MATTONI : TEX_PT, color: col, roughness: 0.92, metalness: 0 });
     const P = [], UV = [], I = [], P2 = [], UV2 = [], I2 = [];
     const addQuad = (arrP, arrUV, arrI, ax, az, bx, bz, y0, y1, u0, u1, v0, v1, out) => {
       const b = arrP.length / 3;
@@ -241,7 +266,11 @@ async function buildMunicipio(loader){
   outer.rotation.y = best.a + (best.w > best.d ? Math.PI / 2 : 0) + MUNI_FLIP * Math.PI;
   const y = Math.min(...poly.map(p => demAt(p[0], p[1])));
   outer.position.set(c[0], y + 0.2, c[1]); outer.add(mid); scene.add(outer);
-  MUNI = { grp: outer, c, poly };
+  // frame della facciata: fw = normale uscente della facciata (verso la strada), rt = lungo la facciata
+  { let bi = 0, bd = 1e9; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; const d = Math.hypot(m[0] - FINISH_P[0], m[1] - FINISH_P[1]); if (d < bd) { bd = d; bi = i; } }
+    const a = poly[bi], b = poly[(bi + 1) % poly.length]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]); const rt = [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; let fw = [rt[1], -rt[0]];
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; if ((m[0] + fw[0] - c[0]) * fw[0] + (m[1] + fw[1] - c[1]) * fw[1] < (m[0] - c[0]) * fw[0] + (m[1] - c[1]) * fw[1]) fw = [-fw[0], -fw[1]];
+    MUNI = { grp: outer, c, poly, a, b, m, rt, fw, L, y }; }
   EDIFICI.push({ grp: outer, poly: poly.map(p => [p[0], p[1]]), c, nome: 'Palazzo comunale', tipo: 'municipio', lv: 2, h: 12.5, id: e.id, yb: y });
 }
 let MUNI_FLIP = 1;   // 0/1: facciata verso Via Santa Maria di Loreto (sud-ovest) — si verifica a vista
@@ -277,7 +306,7 @@ float vn3(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   const matTronco = new THREE.MeshStandardMaterial({ color: 0x5a4a3a, roughness: 1, metalness: 0 });
   g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.material = /tronco/i.test(o.name) ? matTronco : matChioma; } });
   const grp = new THREE.Group(); grp.name = 'Alberi'; let n = 0;
-  const posa = (x, z, k) => { const t = g.scene.clone(true); const s = 0.58 + 0.14 * hash(k); t.scale.set(s * 0.85, s, s * 0.85); /* tigli potati del viale: ~7 m, chioma contenuta */ t.rotation.y = hash(k + 7) * Math.PI * 2; t.position.set(x, demAt(x, z), z); grp.add(t); n++; };
+  const posa = (x, z, k) => { const t = g.scene.clone(true); const s = 0.64 + 0.12 * hash(k); t.scale.set(s * 0.8, s, s * 0.8); t.traverse(o => { if (o.isMesh && !/tronco/i.test(o.name)) o.position.y += 1.6; }); /* tigli del viale: ~8 m, fusto libero ~2,5 m, chioma stretta */ t.rotation.y = hash(k + 7) * Math.PI * 2; t.position.set(x, demAt(x, z), z); grp.add(t); n++; };
   for (const a of DATA.alberi) {
     if (a.p) { posa(a.p[0], a.p[1], n); continue; }
     const f = a.fila; let acc = 0;
@@ -324,6 +353,72 @@ async function buildPercorso(){
 }
 const FINISH_P = [-1585, 4883];   // davanti alla facciata del Municipio, su Via Santa Maria di Loreto (da confermare)
 // cerchio del motivo pavimentale davanti alla scalinata: posizione da confermare con Ale (foto)
+// ---------- piazza rialzata del Municipio e arredo urbano (dalle foto) ----------
+function boxAt(w, h, d, x, y, z, rotY, mat){ const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.rotation.y = rotY; m.castShadow = true; m.receiveShadow = true; return m; }
+function lampioneTreGlobi(x, z, y0){
+  const g = new THREE.Group(); const grigio = new THREE.MeshStandardMaterial({ color: '#3b3f44', roughness: 0.6, metalness: 0.5 });
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.26, 0.9, 10), grigio); base.position.y = 0.45; g.add(base);
+  const palo = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.1, 3.2, 8), grigio); palo.position.y = 2.5; g.add(palo);
+  const globo = new THREE.MeshStandardMaterial({ color: '#f4f1e8', emissive: '#f8f3e4', emissiveIntensity: 0.25, roughness: 0.4 });
+  const tops = [[0, 4.5, 0], [-0.55, 4.15, 0], [0.55, 4.15, 0]];
+  for (const t of tops) { const br = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.5, 6), grigio); br.position.set(t[0] * 0.6, 3.95, 0); br.rotation.z = -t[0] * 0.9; g.add(br); const s = new THREE.Mesh(new THREE.SphereGeometry(0.3, 14, 10), globo); s.position.set(t[0], t[1], t[2]); g.add(s); }
+  g.position.set(x, y0, z); g.traverse(o => { if (o.isMesh) o.castShadow = true; }); return g;
+}
+function fioriera(x, z, y0){
+  const g = new THREE.Group();
+  const v = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.6, 0.65, 16), new THREE.MeshStandardMaterial({ color: '#b8b0a2', roughness: 1 })); v.position.y = 0.33; g.add(v);
+  const c = new THREE.Mesh(new THREE.SphereGeometry(0.62, 10, 8), new THREE.MeshStandardMaterial({ color: '#5f7a3c', roughness: 1 })); c.position.y = 0.95; c.scale.y = 0.7; g.add(c);
+  g.position.set(x, y0, z); g.traverse(o => { if (o.isMesh) o.castShadow = true; }); return g;
+}
+function dissuasore(x, z, y0){
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 1.0, 8), new THREE.MeshStandardMaterial({ color: '#2d2f33', roughness: 0.6, metalness: 0.5 })); m.position.set(x, y0 + 0.5, z); m.castShadow = true;
+  const t = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), m.material); t.position.set(x, y0 + 1.02, z); const g = new THREE.Group(); g.add(m, t); return g;
+}
+function buildArredo(){
+  if (!MUNI) return;
+  const { m, rt, fw, L } = MUNI; const grp = new THREE.Group(); grp.name = 'Arredo';
+  const P = (u, v) => [m[0] + rt[0] * u + fw[0] * v, m[1] + rt[1] * u + fw[1] * v];   // u lungo la facciata, v verso la strada
+  const yS = demAt(...P(0, 11));                    // quota della strada davanti
+  const H = 1.0, PROF = 9.0, HALF = L / 2 + 2.5;    // piazza rialzata: 1 m, profonda 9 m, sborda 2,5 m oltre il palazzo
+  const yT = yS + H;
+  // piano in porfido + muro in pietra sui tre lati
+  const ped = new THREE.MeshStandardMaterial({ map: texPorfido(), roughness: 0.9 });
+  const pietra = new THREE.MeshStandardMaterial({ map: TEX_PIETRA, roughness: 1 });
+  const ang = Math.atan2(rt[0], rt[1]);
+  const cen = P(0, PROF / 2 - 0.5);
+  grp.add(boxAt(HALF * 2, H + 1.2, PROF + 1, cen[0], yT - (H + 1.2) / 2 + 0.02, cen[1], ang, pietra));
+  const top = boxAt(HALF * 2, 0.08, PROF + 1, cen[0], yT + 0.02, cen[1], ang, ped); grp.add(top);
+  // cordolo bianco a filo del muro
+  const cb = P(0, PROF + 0.2); grp.add(boxAt(HALF * 2 + 0.4, 0.14, 0.4, cb[0], yT + 0.05, cb[1], ang, new THREE.MeshStandardMaterial({ color: '#e8e3d6', roughness: 0.9 })));
+  // scalinata centrale (6 m) e scala d'angolo (2 m) verso Via Dalmazia: 5 gradini
+  const scala = (u0, w) => { for (let k = 0; k < 5; k++) { const v = PROF + 0.2 + 0.36 * (4 - k) + 0.18; const q = P(u0, v); grp.add(boxAt(w, 0.2, 0.36, q[0], yS + 0.1 + 0.2 * k, q[1], ang, new THREE.MeshStandardMaterial({ color: '#dcd6c8', roughness: 0.9 }))); } };
+  scala(0, 6.5); scala(HALF - 1.6, 2.2);
+  // ringhiera in ferro battuto: corrimano + correnti + montanti, lungo il fronte (salvo le scale) e sui fianchi
+  const ferro = new THREE.MeshStandardMaterial({ color: '#2b2e33', roughness: 0.5, metalness: 0.6 });
+  const tratto = (pA, pB) => { const dx = pB[0] - pA[0], dz = pB[1] - pA[1]; const l = Math.hypot(dx, dz); const a = Math.atan2(dx, dz); const mx = (pA[0] + pB[0]) / 2, mz = (pA[1] + pB[1]) / 2;
+    for (const h of [1.0, 0.55, 0.12]) grp.add(boxAt(0.04, 0.04, l, mx, yT + h, mz, a, ferro));
+    const n = Math.max(1, Math.round(l / 1.4)); for (let k = 0; k <= n; k++) { const t = k / n; const x = pA[0] + dx * t, z = pA[1] + dz * t; grp.add(boxAt(0.05, 1.0, 0.05, x, yT + 0.5, z, a, ferro)); if (k < n) { const x2 = pA[0] + dx * (t + 0.5 / n), z2 = pA[1] + dz * (t + 0.5 / n); const r = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.015, 6, 14), ferro); r.position.set(x2, yT + 0.78, z2); r.rotation.y = a; grp.add(r); } } };
+  const vF = PROF + 0.35;
+  tratto(P(-HALF, vF), P(-3.4, vF)); tratto(P(3.4, vF), P(HALF - 2.9, vF));
+  tratto(P(-HALF, vF), P(-HALF, 0.5)); tratto(P(HALF, vF), P(HALF, 0.5));
+  // lampioni a tre globi ai lati della scalinata, fioriere lungo la ringhiera
+  grp.add(lampioneTreGlobi(...P(-4.6, PROF - 1.2), yT), lampioneTreGlobi(...P(4.6, PROF - 1.2), yT));
+  for (const u of [-11, -8, 8, 11]) grp.add(fioriera(...P(u, PROF - 1.3), yT));
+  // marciapiede in porfido con cordolo lungo la strada davanti e dissuasori all'incrocio
+  const mp = P(0, PROF + 1.6); grp.add(boxAt(HALF * 2 + 4, 0.14, 1.9, mp[0], yS + 0.07, mp[1], ang, ped));
+  scene.add(grp);
+  // fontana circolare bianca di Piazza della Repubblica (dalla foto di Via Fiume) e dissuasori in ghisa
+  const fz = [-1534, 4942], yf = demAt(fz[0], fz[1]);
+  const bianco = new THREE.MeshStandardMaterial({ color: '#efece6', roughness: 0.7 });
+  const vasca = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.3, 0.7, 36), bianco); vasca.position.set(fz[0], yf + 0.35, fz[1]); vasca.castShadow = true; scene.add(vasca);
+  const acqua = new THREE.Mesh(new THREE.CylinderGeometry(2.9, 2.9, 0.08, 36), new THREE.MeshStandardMaterial({ color: '#6fb0d8', roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 })); acqua.position.set(fz[0], yf + 0.7, fz[1]); scene.add(acqua);
+  const getto = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.25, 1.4, 8), new THREE.MeshStandardMaterial({ color: '#dff2fb', transparent: true, opacity: 0.6 })); getto.position.set(fz[0], yf + 1.4, fz[1]); scene.add(getto);
+  for (let k = 0; k < 7; k++) scene.add(dissuasore(-1547 + k * 1.6 * 0.6, 4927 + k * 1.6 * 0.8, demAt(-1547 + k * 0.96, 4927 + k * 1.28)));
+  // lampioni con lanterna lungo Via Santa Maria di Loreto (fra i tigli, ogni ~22 m)
+  const lan = new THREE.MeshStandardMaterial({ color: '#2d2f33', roughness: 0.6, metalness: 0.5 });
+  for (let k = 0; k < 5; k++) { const x = -1596 + k * 10.5, z = 4866 + k * 11.9; const y0 = demAt(x, z); const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 4.5, 8), lan); p.position.set(x - 4.2, y0 + 2.25, z + 3.7); p.castShadow = true; scene.add(p); const l = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.6, 6), new THREE.MeshStandardMaterial({ color: '#f6f0dc', emissive: '#f1e6c0', emissiveIntensity: 0.3 })); l.position.set(x - 4.2, y0 + 4.7, z + 3.7); scene.add(l); }
+}
+function MUNI_P(u, v){ const { m, rt, fw } = MUNI; return [m[0] + rt[0] * u + fw[0] * v, m[1] + rt[1] * u + fw[1] * v]; }
 function buildMotivoPiazza(){
   if (!MUNI) return;
   // davanti al centro della facciata sud-ovest, 9 m fuori dall'impronta
@@ -333,11 +428,12 @@ function buildMotivoPiazza(){
   const dx = FINISH_P[0] - m[0], dz = FINISH_P[1] - m[1]; const dn = Math.hypot(dx, dz);
   const cx = m[0] + dx / dn * 5, cz = m[1] + dz / dn * 5;      // a meta' fra la facciata e la scalinata (piazza larga ~10 m)
   const ring = new THREE.Mesh(new THREE.RingGeometry(2.2, 2.6, 48), new THREE.MeshStandardMaterial({ color: '#b9b0a0', roughness: 1, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
-  ring.rotation.x = -Math.PI / 2; ring.position.set(cx, demAt(cx, cz) + 0.12, cz); ring.name = 'MotivoCircolare'; scene.add(ring);
-  const r2 = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.9, 32), ring.material); r2.rotation.x = -Math.PI / 2; r2.position.set(cx, demAt(cx, cz) + 0.12, cz); scene.add(r2);
+  const yq = demAt(...MUNI_P(0, 11)) + 1.0 + 0.12;
+  ring.rotation.x = -Math.PI / 2; ring.position.set(cx, yq, cz); ring.name = 'MotivoCircolare'; scene.add(ring);
+  const r2 = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.9, 32), ring.material); r2.rotation.x = -Math.PI / 2; r2.position.set(cx, yq, cz); scene.add(r2);
   // segnaposto dell'incudine
-  const inc = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.45), new THREE.MeshStandardMaterial({ color: '#3a3a3a', roughness: 0.5, metalness: 0.6 })); inc.position.set(cx, demAt(cx, cz) + 0.9, cz); inc.castShadow = true; inc.name = 'Incudine_segnaposto'; scene.add(inc);
-  const ceppo = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.6, 12), new THREE.MeshStandardMaterial({ color: '#7a5a3a', roughness: 1 })); ceppo.position.set(cx, demAt(cx, cz) + 0.3, cz); ceppo.castShadow = true; scene.add(ceppo);
+  const inc = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.6, 0.45), new THREE.MeshStandardMaterial({ color: '#3a3a3a', roughness: 0.5, metalness: 0.6 })); inc.position.set(cx, yq + 0.78, cz); inc.castShadow = true; inc.name = 'Incudine_segnaposto'; scene.add(inc);
+  const ceppo = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.4, 0.6, 12), new THREE.MeshStandardMaterial({ color: '#7a5a3a', roughness: 1 })); ceppo.position.set(cx, yq + 0.18, cz); ceppo.castShadow = true; scene.add(ceppo);
 }
 // ---------- Lino ----------
 async function buildLino(loader){
@@ -380,6 +476,15 @@ function setupInput(){
   joy.addEventListener('pointerup', fine); joy.addEventListener('pointercancel', fine);
   const br = $('brun'); br.addEventListener('pointerdown', () => { ST.run = true; }); br.addEventListener('pointerup', () => { ST.run = false; }); br.addEventListener('pointercancel', () => { ST.run = false; });
 }
+// quota calpestabile: terreno, piu' la piazza rialzata del Municipio (con i gradini della scalinata)
+function quotaCamminata(x, z){
+  const g = demAt(x, z); if (!MUNI) return g;
+  const { m, rt, fw, L } = MUNI; const dx = x - m[0], dz = z - m[1]; const u = dx * rt[0] + dz * rt[1], v = dx * fw[0] + dz * fw[1];
+  const HALF = L / 2 + 2.5, PROF = 9.0; const yS = demAt(...MUNI_P(0, 11));
+  if (Math.abs(u) <= HALF && v >= -0.5 && v <= PROF + 0.2) return yS + 1.0;
+  if (Math.abs(u) <= 3.25 && v > PROF + 0.2 && v < PROF + 2.2) { const k = Math.floor((PROF + 2.2 - v) / 0.36); return yS + 0.2 * Math.min(5, k + 1); }
+  return g;
+}
 function bloccato(x, z){
   for (const e of EDIFICI) { if (Math.abs(e.c[0] - x) > 45 || Math.abs(e.c[1] - z) > 45) continue; if (dentro(e.poly, x, z)) return e; }
   return null;
@@ -413,7 +518,7 @@ function tick(){
     ST.yaw -= clamp(kt, -1, 1) * 2.4 * dt;
     const nx = ST.x + Math.sin(ST.yaw) * ST.v * dt, nz = ST.z + Math.cos(ST.yaw) * ST.v * dt;
     if (!bloccato(nx, nz)) { ST.x = nx; ST.z = nz; } else ST.v = 0;
-    const y = demAt(ST.x, ST.z);
+    const y = quotaCamminata(ST.x, ST.z);
     lino.position.set(ST.x, y, ST.z); lino.rotation.y = ST.yaw - Math.PI / 2;   // il modello guarda verso +x
     if (mixer) {
       const sp = Math.abs(ST.v); const wW = sp < 0.05 ? 0 : clamp(1 - (sp - 1.5) / 1.5, 0, 1), wR = clamp((sp - 1.5) / 1.5, 0, 1);
@@ -457,7 +562,7 @@ async function main(){
   await Promise.all([buildMunicipio(loader).catch(e => console.warn(e)), buildAlberi(loader).catch(e => console.warn(e)), buildLino(loader).catch(e => console.warn(e))]);
   prog(0.85, 'percorso…');
   await buildPercorso().catch(e => console.warn(e));
-  buildMotivoPiazza();
+  buildArredo(); buildMotivoPiazza();
   setupInput(); prog(1, 'pronto');
   { const y = demAt(ST.x, ST.z); camera.position.set(ST.x - Math.sin(ST.yaw) * 7, y + 3.5, ST.z - Math.cos(ST.yaw) * 7); camera.lookAt(ST.x, y + 1.5, ST.z); }
   setTimeout(() => $('load').classList.add('off'), 300);
