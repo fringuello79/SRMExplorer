@@ -379,13 +379,13 @@ async function buildPercorso(){
   const matR = new THREE.MeshStandardMaterial({ color: '#f2a900', roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
   const matP = new THREE.MeshStandardMaterial({ color: '#ff5a1f', roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
   const grp = new THREE.Group(); grp.name = 'Percorso';
-  grp.add(nastro(seg(ia, a0), 1.6, 0.12, matR, 'percorso andata'));
-  grp.add(nastro(seg(b0, ib), 1.6, 0.12, matR, 'percorso ritorno'));
+  grp.add(nastro(seg(ia, a0), 1.6, 0.3, matR, 'percorso andata'));
+  grp.add(nastro(seg(b0, ib), 1.6, 0.3, matR, 'percorso ritorno'));
   // nuovo finale (e, al contrario, nuova partenza): da Via Dalmazia all'incrocio con Via Santa Maria
   // di Loreto, poi a sinistra fino a meta' della facciata del Palazzo comunale
   const stacco = [r.x[ib], -r.y[ib]];
   const ext = [stacco, [-1581, 4844], [-1593, 4861], [-1598, 4868.5], [-1593.5, 4874], FINISH_P];
-  grp.add(nastro(ext, 1.6, 0.14, matP, 'nuovo finale'));
+  grp.add(nastro(ext, 1.6, 0.32, matP, 'nuovo finale'));
   // traguardo: arco sottile e scritta
   const arco = new THREE.Group(); arco.name = 'Traguardo';
   const colMat = new THREE.MeshStandardMaterial({ color: '#f3efe2', roughness: 0.6 });
@@ -642,7 +642,12 @@ async function exportGLB(){
 }
 async function caricaEdit(loader){
   let g; try { g = await loadGLB(loader, 'assets/centro_edit.glb?' + VER); } catch (e) { return false; }
-  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = !/Terreno|Strade|percorso|nuovo/i.test(o.name); o.receiveShadow = true; } });
+  g.scene.traverse(o => { if (!o.isMesh) return; o.castShadow = !/Terreno|Strade|percorso|nuovo|Mesh_26/i.test(o.name); o.receiveShadow = true;
+    // il GLB perde renderOrder e polygonOffset: si rimettono a strade, aree e nastri del percorso (altrimenti sfarfallano col terreno)
+    let p = o; let sopra = false; while (p) { if (/Strade|Percorso/.test(p.name)) sopra = true; p = p.parent; }
+    if (sopra && o.material) { o.material = o.material.clone(); o.material.polygonOffset = true; o.material.polygonOffsetFactor = -4; o.material.polygonOffsetUnits = -4; o.renderOrder = 1; }
+    if (/chioma/i.test(o.name) && o.material) { o.material = o.material.clone(); o.material.color.set(hash(o.id) > 0.5 ? '#8a9a3a' : '#6f8a35'); } });
+  { const pc = g.scene.getObjectByName('Percorso'); if (pc) pc.position.y += 0.2; }   // il nastro di gara sopra le strade
   scene.add(g.scene); EDIT_GLB = true;
   // gli edifici del glb restano cliccabili e bloccano il passo tramite le impronte OSM
   for (const e of DATA.edifici) { if (e.tipo === 'municipio') continue; const poly = e.p.map(p => [p[0], p[1]]); if (poly.length < 3) continue; const grp = g.scene.getObjectByName('Ed_' + e.id); EDIFICI.push({ grp: grp || g.scene, poly, c: centro(poly), nome: e.nome, tipo: e.tipo, lv: e.lv || 0, h: 0, id: e.id, yb: 0 }); }
