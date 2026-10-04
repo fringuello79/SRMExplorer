@@ -615,7 +615,7 @@ const ARCO = { x: -1555.6, z: 4890.4, L: 15, dx: 0, dz: -1 };   // centro (three
 const CN = { on: true, c: [-1566, 4866], r: 340, finish: [-1585, 4883], sAtt: 45,
              poly: [[-1585, 4883], [-1594, 4873.5], [-1598, 4868], [-1581, 4844]],   // dall'arco fino all'imbocco di Via Dalmazia; l'ultimo tratto va al punto di attacco
              cerchio: [-1575.5, 4874.9],      // motivo circolare a meta' piazza (incudine)
-             L: 0, cum: [], ys: null, caricato: false };
+             rNastro: 300, L: 0, cum: [], ys: null, caricato: false };
 let SMAX = 0;      // fine corsa (arrivo sotto l'arco)
 function cnPrepara(){
   posAt(CN.sAtt, tmpA); const pts = CN.poly.concat([[tmpA.x, tmpA.z]]);
@@ -932,7 +932,7 @@ let MAGLIANOC = null;
 async function buildCentroNuovo(loader){
   if (!CN.on) return;
   let g; try { g = await loadGLB(loader, 'centro/assets/centro_edit.glb?' + VER, () => {}); } catch (e) { console.warn('centro_edit.glb assente: resta il centro vecchio', e); CN.on = false; return; }
-  const via = /^(Percorso|Traguardo|Incudine_segnaposto|MotivoCircolare)/;
+  const via = /^(Percorso|Traguardo|Incudine_segnaposto|MotivoCircolare|Terreno)/;   // il suolo del paese resta quello dell'Explorer (texture coerente)
   g.scene.traverse(o => {
     if (via.test(o.name || '')) o.visible = false;
     if (!o.isMesh) return;
@@ -969,12 +969,16 @@ async function buildCentroNuovo(loader){
       const mid = pil[0].clone().add(pil[1]).multiplyScalar(0.5);
       let yb = 1e9; arco.traverse(o => { if (o.isMesh && /^Arch_Pillar/.test(o.name || '')) { bb.setFromObject(o); yb = Math.min(yb, bb.min.y); } });
       const a0 = Math.atan2(pil[1].x - pil[0].x, pil[1].z - pil[0].z);
-      const a1 = Math.atan2(-0.668, -0.744);                      // direzione della facciata (parallela alla via)
+      const a1 = Math.atan2(-0.744, 0.668);                       // di traverso alla via: la scritta SRM guarda chi arriva lungo la strada
       const piv = new THREE.Group(); piv.name = 'ArcoPivot'; const par = arco.parent; par.add(piv);
       piv.position.set(mid.x, yb + 1.0, mid.z); piv.attach(arco);   // perno alla base dei piloni (erano annegati di 1 m)
       piv.rotation.y = a1 - a0;
       // l'arco e' alla scala di Lino (gigante): nel paese reale lo si riduce a 0,6 (luce ~8 m, pari alla carreggiata)
       piv.scale.setScalar(CN.scalaArco || 0.6);
+      // scritta SRM anche sul retro: copia della scritta ruotata di 180 gradi attorno al centro dello striscione
+      { const txt = arco.getObjectByName('ArchTxt'), ban = arco.getObjectByName('Arch_Banner');
+        piv.updateMatrixWorld(true);
+        if (txt && ban && !arco.getObjectByName('ArchTxt_retro')) { const cb = new THREE.Box3().setFromObject(ban).getCenter(new THREE.Vector3()); const g2 = new THREE.Group(); g2.name = 'ArchTxt_retro'; txt.parent.add(g2); g2.position.copy(txt.parent.worldToLocal(cb.clone())); const r = txt.clone(); txt.parent.add(r); r.updateMatrixWorld(true); g2.attach(r); g2.rotation.y = Math.PI; } }
       let yq = terraVera(CN.finish[0], CN.finish[1], 1200); if (yq < -1e3) yq = groundAt(CN.finish[0], CN.finish[1]);
       piv.position.set(CN.finish[0], yq + 0.22, CN.finish[1]);
       piv.updateMatrixWorld(true);
@@ -995,8 +999,43 @@ async function buildCentroNuovo(loader){
   }
   CN.caricato = true;
   cnPrepara();
+  // il vecchio nastro SRM_Trail dentro il paese si affonda (tagliava la piazza e finiva sotto il palazzo)
+  // e al suo posto si disegna un nastro nuovo centrato sul cammino di Lino (posAt), sull'asfalto del paese
+  scene.traverse(o => { if (o.isMesh && (o.name || '') === 'SRM_Trail') {
+    const pa = o.geometry.getAttribute('position'); let n = 0;
+    for (let i = 0; i < pa.count; i++) { if (Math.hypot(pa.getX(i) - C[0], pa.getZ(i) - C[1]) < CN.rNastro) { pa.setY(i, pa.getY(i) - 6); n++; } }
+    pa.needsUpdate = true; o.geometry.computeBoundingSphere(); console.log('nastro vecchio affondato in paese:', n, 'vertici');
+  } });
+  buildNastroPaese();
   const sNow = st.s; st.s = S0_ARCO; if (sNow > 0) st.s = sNow;
   console.log('centro nuovo: nascosti', nascondi.length, 'oggetti del vecchio centro');
+}
+// nastro di gara in paese: dall'arco fin dove il tracciato esce dal raggio del paese, e lo stesso al ritorno
+function buildNastroPaese(){
+  const C = CN.c, W = 1.7;
+  const mat = new THREE.MeshStandardMaterial({ color: '#e8a21c', roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 });
+  const bordo = new THREE.MeshStandardMaterial({ color: '#f6f1e2', roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 });
+  const grp = new THREE.Group(); grp.name = 'NastroPaese';
+  const tratto = (sA, sB) => {
+    const P = [], I = [], PB = [], IB = [];
+    let k = 0;
+    for (let sS = sA; sS <= sB + 0.01; sS += 1.5) {
+      posAt(sS, tmpA); tanAt(sS, tmpB); const nx = -tmpB.z, nz = tmpB.x;
+      const y = tmpA.y + 0.12;
+      P.push(tmpA.x + nx * W / 2, y, tmpA.z + nz * W / 2, tmpA.x - nx * W / 2, y, tmpA.z - nz * W / 2);
+      PB.push(tmpA.x + nx * (W / 2 + 0.25), y - 0.01, tmpA.z + nz * (W / 2 + 0.25), tmpA.x - nx * (W / 2 + 0.25), y - 0.01, tmpA.z - nz * (W / 2 + 0.25));
+      if (k > 0) { const b = (k - 1) * 2; I.push(b, b + 2, b + 1, b + 1, b + 2, b + 3); IB.push(b, b + 2, b + 1, b + 1, b + 2, b + 3); }
+      k++;
+    }
+    for (const [pts, idx, m, ro] of [[PB, IB, bordo, 2], [P, I, mat, 3]]) {
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3)); g.setIndex(idx); g.computeVertexNormals();
+      const mesh = new THREE.Mesh(g, m); mesh.renderOrder = ro; mesh.receiveShadow = true; mesh.material.side = THREE.DoubleSide; grp.add(mesh);
+    }
+  };
+  let sOut = CN.sAtt; while (sOut < TOT / 2) { posAt(sOut, tmpA); if (Math.hypot(tmpA.x - C[0], tmpA.z - C[1]) > CN.rNastro + 15) break; sOut += 5; }
+  let sIn = TOT - CN.sAtt; while (sIn > TOT / 2) { posAt(sIn, tmpA); if (Math.hypot(tmpA.x - C[0], tmpA.z - C[1]) > CN.rNastro + 15) break; sIn -= 5; }
+  tratto(S0_ARCO, sOut); tratto(sIn, SMAX);
+  scene.add(grp);
 }
 // ---------- partenza e piazza: transenne e festoni arrivano da maglianoC.glb (posizionati da Ale in
 // magliano_centro.blend: oggetti Transenna_* e Festone_*); qui solo materiali e vento ----------

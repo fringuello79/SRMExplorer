@@ -197,7 +197,8 @@ function buildStrade(){
   scene.add(grp);
 }
 // ---------- edifici: pareti con finestre per piano, tetto a falde basse ----------
-let TEX_MURI = [], TEX_PT = null, TEX_TEG = null, TEX_MATTONI = null, TEX_PIETRA = null;
+let TEX_MURI = [], TEX_PT = null, TEX_TEG = null, TEX_MATTONI = null, TEX_PIETRA = null, MAT_TEGOLE = null, MAT_CORNICE = null;
+const TETTI_ORTO = new URLSearchParams(location.search).has('tettiorto');   // tetti dall'ortofoto (sfocati): spenti, meglio le tegole
 // colori e materiali delle facciate letti dalle foto di Street View (ott. 2025): punto in scena + raggio
 const OVERRIDE_COL = [
   { p: [-1541, 4897], r: 14, col: '#ffffff', mattoni: true },   // casa d'angolo in mattoni faccia a vista, lato est di Via S. Maria di Loreto
@@ -224,6 +225,7 @@ function texPietra(){
 const PALETTE = ['#f4efe4', '#efe3c9', '#e9d3a8', '#f1d7c0', '#eadfd6', '#dcd6c8', '#f3e6c0', '#e5c9a2', '#f0e9dc', '#e8c7b4'];
 function buildEdifici(){
   TEX_MURI = [texMuro(0.2), texMuro(0.8)]; TEX_PT = texPianoTerra(); TEX_TEG = texTegole(); TEX_MATTONI = texMattoni(); TEX_PIETRA = texPietra();
+  MAT_TEGOLE = new THREE.MeshStandardMaterial({ map: TEX_TEG, roughness: 1, side: THREE.DoubleSide }); MAT_CORNICE = new THREE.MeshStandardMaterial({ color: '#d9d2c2', roughness: 1, side: THREE.DoubleSide });
   const grp = new THREE.Group(); grp.name = 'Edifici';
   const PIANO = 3.2;
   for (const e of DATA.edifici) {
@@ -270,13 +272,13 @@ function buildEdifici(){
     const pt = gT.getAttribute('position'); for (let k = 0; k < pt.count; k++) pt.setY(k, yb + H + 0.05);
     const uvT = gT.getAttribute('uv');
     // con l'ortofoto, il tetto prende la sua immagine vera dall'alto (colore, abbaini, lucernari); altrimenti tegole
-    if (ORTO_TEX) { for (let k = 0; k < uvT.count; k++) { const ll = three2ll(pt.getX(k), pt.getZ(k)); uvT.setXY(k, (ll[1] - ORTO.lon0) / (ORTO.lon1 - ORTO.lon0), (ll[0] - ORTO.lat0) / (ORTO.lat1 - ORTO.lat0)); } }
+    if (TETTI_ORTO) { for (let k = 0; k < uvT.count; k++) { const ll = three2ll(pt.getX(k), pt.getZ(k)); uvT.setXY(k, (ll[1] - ORTO.lon0) / (ORTO.lon1 - ORTO.lon0), (ll[0] - ORTO.lat0) / (ORTO.lat1 - ORTO.lat0)); } }
     else for (let k = 0; k < uvT.count; k++) uvT.setXY(k, pt.getX(k) / 1.2, pt.getZ(k) / 1.2);
     gT.computeVertexNormals();
-    const tetto = new THREE.Mesh(gT, ORTO_TEX ? MAT_TETTO_ORTO : new THREE.MeshStandardMaterial({ map: TEX_TEG, roughness: 1, side: THREE.DoubleSide })); tetto.castShadow = true; tetto.receiveShadow = true;
+    const tetto = new THREE.Mesh(gT, TETTI_ORTO ? MAT_TETTO_ORTO : MAT_TEGOLE); tetto.castShadow = true; tetto.receiveShadow = true; tetto.name = 'Tetto_' + e.id;
     gE.add(tetto);
     // cornicione
-    const corn = new THREE.Mesh(gT.clone(), new THREE.MeshStandardMaterial({ color: '#d9d2c2', roughness: 1, side: THREE.DoubleSide })); corn.position.y = -0.35; corn.scale.set(1, 1, 1); gE.add(corn);
+    const corn = new THREE.Mesh(gT.clone(), MAT_CORNICE); corn.position.y = -0.35; corn.name = 'Cornice_' + e.id; gE.add(corn);
     grp.add(gE);
     EDIFICI.push({ grp: gE, poly, c, nome: e.nome, tipo: e.tipo, lv, h: H, id: e.id, yb });
   }
@@ -307,7 +309,7 @@ async function buildMunicipio(loader){
   // pavimento del palazzo a filo con la piazza rialzata (quota strada davanti + 1 m)
   const PROF0 = Math.max(6, distAsse(c, 'Via Santa Maria di Loreto') - 3.4 - 1.6 - 8);   // stima: dal centro, meno mezza profondita'
   const y = demAt(c[0] + 0, c[1]);
-  outer.position.set(c[0], y, c[1]); outer.add(mid); scene.add(outer);
+  outer.position.set(c[0] + MUNI_OFF[0], y, c[1] + MUNI_OFF[1]); outer.add(mid); scene.add(outer);
   // frame della facciata: fw = normale uscente della facciata (verso la strada), rt = lungo la facciata
   { let bi = 0, bd = 1e9; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; const d = Math.hypot(m[0] - FINISH_P[0], m[1] - FINISH_P[1]); if (d < bd) { bd = d; bi = i; } }
     const a = poly[bi], b = poly[(bi + 1) % poly.length]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]); const rt = [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; let fw = [rt[1], -rt[0]];
@@ -318,6 +320,7 @@ async function buildMunicipio(loader){
     outer.position.y = yS + 1.0 - 0.35; MUNI.y = outer.position.y; }   // la base del modello Meshy non e' piana: si affonda di 35 cm nella piazza
   EDIFICI.push({ grp: outer, poly: poly.map(p => [p[0], p[1]]), c, nome: 'Palazzo comunale', tipo: 'municipio', lv: 2, h: 12.5, id: e.id, yb: y });
 }
+const MUNI_OFF = [-3.24, 2.76];   // spostamento dato da Ale in Blender (04/10)
 let MUNI_FLIP = 1, MUNI_DROT = 2.5 * Math.PI / 180;   // piccola correzione antioraria (il modello Meshy e' leggermente ruotato)   // 0/1: facciata verso Via Santa Maria di Loreto (sud-ovest) — si verifica a vista
 // ---------- tigli (modello di Ale) sui filari OSM ----------
 async function buildAlberi(loader){
