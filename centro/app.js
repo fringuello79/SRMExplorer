@@ -185,7 +185,7 @@ function buildStrade(){
   const grp = new THREE.Group(); grp.name = 'Strade';
   for (const s of DATA.strade) {
     if (s.tipo === 'steps' || s.tipo === 'footway' || s.tipo === 'path') { const m = nastro(s.p, s.w, 0.07, ped, s.nome); grp.add(m); }
-    else { const m = nastro(s.p, s.w, 0.06, s.tipo === 'pedestrian' ? ped : asf, s.nome); grp.add(m); }
+    else { const w = s.tipo === 'tertiary' ? 8.2 : s.tipo === 'residential' ? 6.0 : s.w; const m = nastro(s.p, w, 0.06, s.tipo === 'pedestrian' ? ped : asf, s.nome); grp.add(m); }
     STRADE.push(s);
   }
   for (const a of DATA.aree) {
@@ -229,7 +229,7 @@ function buildEdifici(){
     let poly = e.p.map(p => [p[0], p[1]]); if (poly.length < 3) continue;
     if (areaSegno(poly) < 0) poly.reverse();     // orientazione uniforme
     const A = Math.abs(areaSegno(poly));
-    let lv = e.lv; if (!lv) lv = A < 45 ? 1 : A < 170 ? 2 : 3;
+    let lv = e.lv; if (!lv) lv = A < 70 ? 1 : 2;      // il centro di Magliano e' a uno o due piani (Ale)
     if (e.tipo === 'chiesa') lv = 3.5;
     let H = e.h || lv * PIANO + 0.6;
     const c = centro(poly);
@@ -239,8 +239,8 @@ function buildEdifici(){
     const ov = OVERRIDE_COL.find(o => Math.hypot(o.p[0] - c[0], o.p[1] - c[1]) < o.r);
     const col = ov ? ov.col : e.tipo === 'chiesa' ? '#efe8dc' : PALETTE[Math.floor(seme * PALETTE.length)];
     const mattoni = ov && ov.mattoni;
-    const matMuro = new THREE.MeshStandardMaterial({ map: mattoni ? TEX_MATTONI : TEX_MURI[seme > 0.5 ? 1 : 0], color: col, roughness: 0.92, metalness: 0 });
-    const matPT = new THREE.MeshStandardMaterial({ map: mattoni ? TEX_MATTONI : TEX_PT, color: col, roughness: 0.92, metalness: 0 });
+    const matMuro = new THREE.MeshStandardMaterial({ map: mattoni ? TEX_MATTONI : TEX_MURI[seme > 0.5 ? 1 : 0], color: col, roughness: 0.92, metalness: 0, side: THREE.DoubleSide });
+    const matPT = new THREE.MeshStandardMaterial({ map: mattoni ? TEX_MATTONI : TEX_PT, color: col, roughness: 0.92, metalness: 0, side: THREE.DoubleSide });
     const P = [], UV = [], I = [], P2 = [], UV2 = [], I2 = [];
     const addQuad = (arrP, arrUV, arrI, ax, az, bx, bz, y0, y1, u0, u1, v0, v1, out) => {
       const b = arrP.length / 3;
@@ -301,17 +301,22 @@ async function buildMunicipio(loader){
   const outer = new THREE.Group(); outer.name = 'Municipio';
   // orientamento dal lato della facciata (il lato lungo verso Via S. Maria di Loreto): asse lungo del modello (z) lungo il lato
   let bi = 0, bd = 1e9; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; const mm = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; const d = Math.hypot(mm[0] - FINISH_P[0], mm[1] - FINISH_P[1]); if (d < bd) { bd = d; bi = i; } }
-  { const a = poly[bi], b = poly[(bi + 1) % poly.length]; outer.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]) + MUNI_FLIP * Math.PI; }
-  const y = Math.min(...poly.map(p => demAt(p[0], p[1])));
-  outer.position.set(c[0], y + 0.2, c[1]); outer.add(mid); scene.add(outer);
+  { const a = poly[bi], b = poly[(bi + 1) % poly.length]; outer.rotation.y = Math.atan2(b[0] - a[0], b[1] - a[1]) + MUNI_FLIP * Math.PI + MUNI_DROT; }
+  // pavimento del palazzo a filo con la piazza rialzata (quota strada davanti + 1 m)
+  const PROF0 = Math.max(6, distAsse(c, 'Via Santa Maria di Loreto') - 3.4 - 1.6 - 8);   // stima: dal centro, meno mezza profondita'
+  const y = demAt(c[0] + 0, c[1]);
+  outer.position.set(c[0], y, c[1]); outer.add(mid); scene.add(outer);
   // frame della facciata: fw = normale uscente della facciata (verso la strada), rt = lungo la facciata
   { let bi = 0, bd = 1e9; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; const d = Math.hypot(m[0] - FINISH_P[0], m[1] - FINISH_P[1]); if (d < bd) { bd = d; bi = i; } }
     const a = poly[bi], b = poly[(bi + 1) % poly.length]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]); const rt = [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; let fw = [rt[1], -rt[0]];
     const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; if ((m[0] + fw[0] - c[0]) * fw[0] + (m[1] + fw[1] - c[1]) * fw[1] < (m[0] - c[0]) * fw[0] + (m[1] - c[1]) * fw[1]) fw = [-fw[0], -fw[1]];
-    MUNI = { grp: outer, c, poly, a, b, m, rt, fw, L, y }; }
+    MUNI = { grp: outer, c, poly, a, b, m, rt, fw, L, y };
+    const PROF = Math.max(6, distAsse(m, 'Via Santa Maria di Loreto') - 3.4 - 1.6);
+    const yS = demAt(m[0] + fw[0] * (PROF + 2.5), m[1] + fw[1] * (PROF + 2.5));
+    outer.position.y = yS + 1.0 + 0.03; MUNI.y = outer.position.y; }
   EDIFICI.push({ grp: outer, poly: poly.map(p => [p[0], p[1]]), c, nome: 'Palazzo comunale', tipo: 'municipio', lv: 2, h: 12.5, id: e.id, yb: y });
 }
-let MUNI_FLIP = 1;   // 0/1: facciata verso Via Santa Maria di Loreto (sud-ovest) — si verifica a vista
+let MUNI_FLIP = 1, MUNI_DROT = 2.5 * Math.PI / 180;   // piccola correzione antioraria (il modello Meshy e' leggermente ruotato)   // 0/1: facciata verso Via Santa Maria di Loreto (sud-ovest) — si verifica a vista
 // ---------- tigli (modello di Ale) sui filari OSM ----------
 async function buildAlberi(loader){
   const g = await loadGLB(loader, 'assets/tiglio.glb?' + VER);
@@ -429,7 +434,7 @@ function buildArredo(){
   const yT = yS + H;
   // piano in porfido + muro in pietra sui tre lati
   const ped = new THREE.MeshStandardMaterial({ map: texPorfido(), roughness: 0.9 });
-  const pietra = new THREE.MeshStandardMaterial({ map: TEX_PIETRA.clone(), roughness: 1 }); pietra.map.repeat.set(12, 1); pietra.map.needsUpdate = true;
+  const pietra = new THREE.MeshStandardMaterial({ map: TEX_PIETRA.clone(), roughness: 1 }); pietra.map.repeat.set(28, 2); pietra.map.needsUpdate = true;
   const ang = Math.atan2(-rt[1], rt[0]);          // BoxGeometry: larghezza lungo rt, profondita' lungo fw
   const cen = P(0, PROF / 2 - 0.5);
   grp.add(boxAt(HALF * 2, H + 1.2, PROF + 1, cen[0], yT - (H + 1.2) / 2 + 0.02, cen[1], ang, pietra));
@@ -453,7 +458,17 @@ function buildArredo(){
   for (const u of [-11, -8, 8, 11]) grp.add(fioriera(...P(u, PROF - 1.3), yT));
   // marciapiede in porfido con cordolo lungo la strada davanti e dissuasori all'incrocio
   const pedMp = ped.clone(); pedMp.map = ped.map.clone(); pedMp.map.repeat.set(HALF + 2, 1); pedMp.map.needsUpdate = true;
-  const mp = P(0, PROF + 1.6); grp.add(boxAt(HALF * 2 + 4, 0.14, 1.9, mp[0], yS + 0.07, mp[1], ang, pedMp));
+  // marciapiede e asfalto davanti: lastre che seguono il terreno (niente gradini ne' buchi)
+  const lastra = (u0, u1, v0, v1, y0, mat, rep) => { const nu = Math.ceil((u1 - u0) / 2), nv = Math.ceil((v1 - v0) / 2); const Pz = [], UV = [], I = [];
+    for (let i = 0; i <= nu; i++) for (let j = 0; j <= nv; j++) { const u = u0 + (u1 - u0) * i / nu, v = v0 + (v1 - v0) * j / nv; const q = P(u, v); Pz.push(q[0], demAt(q[0], q[1]) + y0, q[1]); UV.push(u / rep, v / rep); }
+    for (let i = 0; i < nu; i++) for (let j = 0; j < nv; j++) { const a = i * (nv + 1) + j, b = a + nv + 1; I.push(a, b, a + 1, a + 1, b, b + 1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(Pz, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(UV, 2)); g.setIndex(I); g.computeVertexNormals();
+    const mm = new THREE.Mesh(g, mat); mm.receiveShadow = true; mm.material.side = THREE.DoubleSide; return mm; };
+  grp.add(lastra(-HALF - 2, HALF + 2, PROF + 0.6, PROF + 2.6, 0.16, pedMp, 2));
+  const asf2 = new THREE.MeshStandardMaterial({ map: texAsfalto(), roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }); asf2.map.repeat.set(1, 1);
+  grp.add(lastra(-HALF - 6, HALF + 6, PROF + 2.55, PROF + 12.5, 0.09, asf2, 3));
+  // cordolo bianco del marciapiede
+  { const nC = Math.ceil((HALF * 2 + 4) / 2); for (let i = 0; i < nC; i++) { const u = -HALF - 2 + (i + 0.5) * (HALF * 2 + 4) / nC; const q = P(u, PROF + 2.6); grp.add(boxAt((HALF * 2 + 4) / nC + 0.02, 0.16, 0.22, q[0], demAt(q[0], q[1]) + 0.1, q[1], ang, new THREE.MeshStandardMaterial({ color: '#e6e1d4', roughness: 0.9 }))); } }
   scene.add(grp);
   // fontana circolare bianca di Piazza della Repubblica (dalla foto di Via Fiume) e dissuasori in ghisa
   const fz = [-1534, 4942], yf = demAt(fz[0], fz[1]);
