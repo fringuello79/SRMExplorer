@@ -149,7 +149,9 @@ function buildTerreno(){
   const t = new THREE.Mesh(g, m); t.receiveShadow = true; t.name = 'Terreno'; scene.add(t);
 }
 // nastro piatto che segue il terreno (strade), largo w, con uv lungo l'asse
-function nastro(pts, w, y0, mat, nome){
+function nastro(pts0, w, y0, mat, nome){
+  // si infittisce ogni 3 m cosi' il nastro segue il terreno anche sui segmenti lunghi
+  const pts = []; for (let i = 0; i < pts0.length; i++) { if (i > 0) { const a = pts0[i - 1], b = pts0[i]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]); const n = Math.max(1, Math.ceil(L / 3)); for (let k = 1; k < n; k++) pts.push([a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n]); } pts.push(pts0[i]); }
   const P = [], UV = [], I = [];
   let s = 0;
   for (let i = 0; i < pts.length; i++) {
@@ -178,19 +180,19 @@ function areaPoly(poly, y0, mat, nome){
   const m = new THREE.Mesh(g, mat); m.receiveShadow = true; m.name = nome || 'area'; m.material.side = THREE.DoubleSide; return m;
 }
 function buildStrade(){
-  const asf = new THREE.MeshStandardMaterial({ map: texAsfalto(), roughness: 0.95, metalness: 0, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+  const asf = new THREE.MeshStandardMaterial({ map: texAsfalto(), roughness: 0.95, metalness: 0, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
   const ped = new THREE.MeshStandardMaterial({ map: texPorfido(), roughness: 0.9, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const verde = new THREE.MeshStandardMaterial({ color: '#7f9a5a', roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const park = new THREE.MeshStandardMaterial({ color: '#8a8a86', roughness: 1, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
   const grp = new THREE.Group(); grp.name = 'Strade';
   for (const s of DATA.strade) {
-    if (s.tipo === 'steps' || s.tipo === 'footway' || s.tipo === 'path') { const m = nastro(s.p, s.w, 0.07, ped, s.nome); grp.add(m); }
-    else { const w = s.tipo === 'tertiary' ? 8.2 : s.tipo === 'residential' ? 6.0 : s.w; const m = nastro(s.p, w, 0.06, s.tipo === 'pedestrian' ? ped : asf, s.nome); grp.add(m); }
+    if (s.tipo === 'steps' || s.tipo === 'footway' || s.tipo === 'path') { const m = nastro(s.p, s.w, 0.22, ped, s.nome); m.renderOrder = 1; grp.add(m); }
+    else { const w = s.tipo === 'tertiary' ? 8.2 : s.tipo === 'residential' ? 6.0 : s.w; const m = nastro(s.p, w, 0.2, s.tipo === 'pedestrian' ? ped : asf, s.nome); m.renderOrder = 1; grp.add(m); }
     STRADE.push(s);
   }
   for (const a of DATA.aree) {
     const mat = a.tipo === 'pedonale' || a.tipo === 'piazza' ? ped : a.tipo === 'parcheggio' ? park : verde;
-    try { grp.add(areaPoly(a.p, a.tipo === 'verde' ? 0.04 : 0.08, mat, a.nome || a.tipo)); } catch (e) {}
+    try { const am = areaPoly(a.p, a.tipo === 'verde' ? 0.12 : 0.18, mat, a.nome || a.tipo); am.renderOrder = 1; grp.add(am); } catch (e) {}
   }
   scene.add(grp);
 }
@@ -313,7 +315,7 @@ async function buildMunicipio(loader){
     MUNI = { grp: outer, c, poly, a, b, m, rt, fw, L, y };
     const PROF = Math.max(6, distAsse(m, 'Via Santa Maria di Loreto') - 3.4 - 1.6);
     const yS = demAt(m[0] + fw[0] * (PROF + 2.5), m[1] + fw[1] * (PROF + 2.5));
-    outer.position.y = yS + 1.0 + 0.03; MUNI.y = outer.position.y; }
+    outer.position.y = yS + 1.0 - 0.35; MUNI.y = outer.position.y; }   // la base del modello Meshy non e' piana: si affonda di 35 cm nella piazza
   EDIFICI.push({ grp: outer, poly: poly.map(p => [p[0], p[1]]), c, nome: 'Palazzo comunale', tipo: 'municipio', lv: 2, h: 12.5, id: e.id, yb: y });
 }
 let MUNI_FLIP = 1, MUNI_DROT = 2.5 * Math.PI / 180;   // piccola correzione antioraria (il modello Meshy e' leggermente ruotato)   // 0/1: facciata verso Via Santa Maria di Loreto (sud-ovest) — si verifica a vista
@@ -481,6 +483,15 @@ function buildArredo(){
   const lan = new THREE.MeshStandardMaterial({ color: '#2d2f33', roughness: 0.6, metalness: 0.5 });
   for (let k = 0; k < 5; k++) { const x = -1596 + k * 10.5, z = 4866 + k * 11.9; const y0 = demAt(x, z); const p = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 4.5, 8), lan); p.position.set(x - 4.2, y0 + 2.25, z + 3.7); p.castShadow = true; scene.add(p); const l = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.6, 6), new THREE.MeshStandardMaterial({ color: '#f6f0dc', emissive: '#f1e6c0', emissiveIntensity: 0.3 })); l.position.set(x - 4.2, y0 + 4.7, z + 3.7); scene.add(l); }
 }
+function frameMunicipio(){
+  const e = DATA.edifici.find(x => x.tipo === 'municipio'); if (!e) return;
+  const poly = e.p, c = centro(poly);
+  let bi = 0, bd = 1e9; for (let i = 0; i < poly.length; i++) { const a = poly[i], b = poly[(i + 1) % poly.length]; const mm = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; const d = Math.hypot(mm[0] - FINISH_P[0], mm[1] - FINISH_P[1]); if (d < bd) { bd = d; bi = i; } }
+  const a = poly[bi], b = poly[(bi + 1) % poly.length]; const L = Math.hypot(b[0] - a[0], b[1] - a[1]); const rt = [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; let fw = [rt[1], -rt[0]];
+  const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; if ((m[0] + fw[0] - c[0]) * fw[0] + (m[1] + fw[1] - c[1]) * fw[1] < (m[0] - c[0]) * fw[0] + (m[1] - c[1]) * fw[1]) fw = [-fw[0], -fw[1]];
+  MUNI = { grp: null, c, poly, a, b, m, rt, fw, L, y: 0 }; MUNI.PROF = Math.max(6, distAsse(m, 'Via Santa Maria di Loreto') - 3.4 - 1.6);
+  EDIFICI.push({ grp: scene, poly: poly.map(p => [p[0], p[1]]), c, nome: 'Palazzo comunale', tipo: 'municipio', lv: 2, h: 12.5, id: e.id, yb: 0 });
+}
 function MUNI_P(u, v){ const { m, rt, fw } = MUNI; return [m[0] + rt[0] * u + fw[0] * v, m[1] + rt[1] * u + fw[1] * v]; }
 function buildMotivoPiazza(){
   if (!MUNI) return;
@@ -558,7 +569,7 @@ function tocca(cx, cy){
   const objs = []; for (const e of EDIFICI) objs.push(e.grp);
   const hit = ray.intersectObjects(objs, true)[0]; if (!hit) return;
   let o = hit.object; while (o && !EDIFICI.find(e => e.grp === o)) o = o.parent;
-  const e = EDIFICI.find(x => x.grp === o); if (!e) return;
+  let e = EDIFICI.find(x => x.grp === o); if (!e && EDIT_GLB) e = bloccato(hit.point.x, hit.point.z); if (!e) return;
   const nome = e.tipo === 'municipio' ? 'Palazzo comunale' : e.nome || (e.tipo === 'chiesa' ? 'Chiesa' : 'Edificio');
   $('card-b').innerHTML = '<h2>' + nome + '</h2><p>' + (e.tipo === 'municipio' ? 'Modello Meshy di Ale posato sull’impronta OpenStreetMap (16 × 35 m). Palazzo «Universitas Malleani»: due piani, arcate e portale al piano terra, loggia centrale a tre arcate con balcone, piazza rialzata con ringhiera in ferro battuto, scalinata centrale e lampioni a tre globi.' :
     'Impronta da OpenStreetMap (way ' + e.id + '); ' + (e.lv ? e.lv + (e.lv > 1 ? ' piani' : ' piano') : '') + ', altezza stimata ' + e.h.toFixed(1) + ' m' + (e.nome ? '' : '. Facciata e colore sono provvisori: da sostituire con il rilievo fotografico.')) + '</p>';
@@ -613,25 +624,53 @@ function tick(){
   renderer.render(scene, camera);
 }
 // ---------- avvio ----------
+// ---------- scambio con Blender ----------
+// exportGLB(): tutto il paese (terreno con ortofoto, strade, edifici, Municipio, arredo, tigli, percorso)
+// in un GLB con i nomi degli oggetti, da aprire in Blender; se nel repo c'e' assets/centro_edit.glb
+// (riesportato da Blender con tools/export_centro.py) l'app lo carica al posto della scena generata.
+let EDIT_GLB = false;
+async function exportGLB(){
+  const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+  const root = new THREE.Group(); root.name = 'MaglianoCentro';
+  for (const n of ['Terreno', 'Strade', 'Edifici', 'Municipio', 'Alberi', 'Arredo', 'Percorso', 'Traguardo', 'MotivoCircolare', 'Incudine_segnaposto']) { const o = scene.getObjectByName(n); if (o) root.add(o.clone(true)); }
+  // terreno: per Blender si usa l'ortofoto come mappa (uv = uvo) al posto dello shader
+  root.traverse(o => { if (o.isMesh && o.name === 'Terreno' && ORTO_TEX) { const g = o.geometry.clone(); g.setAttribute('uv', g.getAttribute('uvo')); o.geometry = g; o.material = new THREE.MeshStandardMaterial({ map: ORTO_TEX, roughness: 1 }); }
+    if (o.isMesh && o.material && o.material.customProgramCacheKey && o.material.customProgramCacheKey() === 'tiglio-c') o.material = new THREE.MeshStandardMaterial({ color: '#8a9a3a', roughness: 0.9 }); });
+  const ex = new GLTFExporter();
+  const buf = await ex.parseAsync(root, { binary: true, onlyVisible: false, maxTextureSize: 4096 });
+  return buf;   // ArrayBuffer
+}
+async function caricaEdit(loader){
+  let g; try { g = await loadGLB(loader, 'assets/centro_edit.glb?' + VER); } catch (e) { return false; }
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = !/Terreno|Strade|percorso|nuovo/i.test(o.name); o.receiveShadow = true; } });
+  scene.add(g.scene); EDIT_GLB = true;
+  // gli edifici del glb restano cliccabili e bloccano il passo tramite le impronte OSM
+  for (const e of DATA.edifici) { if (e.tipo === 'municipio') continue; const poly = e.p.map(p => [p[0], p[1]]); if (poly.length < 3) continue; const grp = g.scene.getObjectByName('Ed_' + e.id); EDIFICI.push({ grp: grp || g.scene, poly, c: centro(poly), nome: e.nome, tipo: e.tipo, lv: e.lv || 0, h: 0, id: e.id, yb: 0 }); }
+  return true;
+}
 async function main(){
   const prog = (f, t) => { $('lbar').style.width = Math.round(f * 100) + '%'; if (t) $('ltxt').textContent = t; };
   buildStage();
   DATA = await (await fetch('assets/centro.json?' + VER)).json(); DEM = DATA.dem; prog(0.15, 'terreno…');
   try { const r = await fetch('assets/orto_centro.json?' + VER); if (r.ok) ORTO = await r.json(); } catch (e) {}
   if (ORTO) { ORTO_TEX = new THREE.TextureLoader().load('assets/orto_centro.jpg?' + VER); ORTO_TEX.colorSpace = THREE.SRGBColorSpace; ORTO_TEX.anisotropy = 8; MAT_TETTO_ORTO = new THREE.MeshStandardMaterial({ map: ORTO_TEX, roughness: 1, side: THREE.DoubleSide }); }
-  buildTerreno(); prog(0.25, 'strade e piazze…');
-  buildStrade(); prog(0.35, 'edifici…');
-  buildEdifici(); prog(0.55, 'Municipio, tigli, Lino…');
   const draco = new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
   const loader = new GLTFLoader().setDRACOLoader(draco);
-  await Promise.all([buildMunicipio(loader).catch(e => console.warn(e)), buildAlberi(loader).catch(e => console.warn(e)), buildLino(loader).catch(e => console.warn(e))]);
-  prog(0.85, 'percorso…');
-  await buildPercorso().catch(e => console.warn(e));
-  buildArredo(); buildMotivoPiazza();
+  const edit = new URLSearchParams(location.search).has('gen') ? false : await caricaEdit(loader);
+  if (edit) { prog(0.6, 'scena modificata in Blender…'); frameMunicipio(); await buildLino(loader).catch(e => console.warn(e)); $('tag').textContent = 'scena da Blender (centro_edit.glb)'; }
+  else {
+    buildTerreno(); prog(0.25, 'strade e piazze…');
+    buildStrade(); prog(0.35, 'edifici…');
+    buildEdifici(); prog(0.55, 'Municipio, tigli, Lino…');
+    await Promise.all([buildMunicipio(loader).catch(e => console.warn(e)), buildAlberi(loader).catch(e => console.warn(e)), buildLino(loader).catch(e => console.warn(e))]);
+    prog(0.85, 'percorso…');
+    await buildPercorso().catch(e => console.warn(e));
+    buildArredo(); buildMotivoPiazza();
+  }
   setupInput(); prog(1, 'pronto');
   { const y = demAt(ST.x, ST.z); camera.position.set(ST.x - Math.sin(ST.yaw) * 7, y + 3.5, ST.z - Math.cos(ST.yaw) * 7); camera.lookAt(ST.x, y + 1.5, ST.z); }
   setTimeout(() => $('load').classList.add('off'), 300);
-  window.CENTRO = { scene, camera, ST, CAM, EDIFICI, demAt, lino: () => lino, muni: () => MUNI, flip: v => { MUNI_FLIP = v; } };
+  window.CENTRO = { scene, camera, ST, CAM, EDIFICI, demAt, lino: () => lino, muni: () => MUNI, flip: v => { MUNI_FLIP = v; }, exportGLB };
   tick();
 }
 main().catch(e => { console.error(e); $('ltxt').innerHTML = 'Errore: ' + e.message + (location.protocol === 'file:' ? '<br><br>La pagina va aperta da un server locale, non dal disco:<br>fai doppio clic su <b>centro\\avvia.bat</b> (oppure <i>python -m http.server</i> nella cartella del repository e apri <i>http://localhost:8000/centro/</i>).' : ''); });
