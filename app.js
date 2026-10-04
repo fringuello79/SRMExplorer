@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v78';
+const VER = 'v79c';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -222,7 +222,7 @@ async function boot(){
       // il rifugio di Sevice era sospeso di quasi 3 m: si posa (regola poggia)
       if (SEVICE) poggia(SEVICE, -0.25);
       // suolo VERO campionato lungo tutto il tratto arco -> km 0, poi il tappeto verde
-      try { setArco(ARCO.x, ARCO.z); campionaTrattoArco(); buildTappeto(); } catch (e) { console.warn('quota arco:', e); }
+      if (!CN.on) try { setArco(ARCO.x, ARCO.z); campionaTrattoArco(); buildTappeto(); } catch (e) { console.warn('quota arco:', e); }
     }
   } catch (e) { console.warn('lupo discesa:', e); }
   loader.load('assets/extras.glb?' + VER, g => {
@@ -288,7 +288,7 @@ async function boot(){
         if (o.material && o.material.isMeshStandardMaterial) { o.material.metalness = 0; o.material.roughness = 0.95; }
       }
     });
-    scene.add(g.scene);
+    scene.add(g.scene); MAGLIANOC = g.scene;
     try { arredaCase(g.scene); } catch (e) { console.warn('facciate maglianoC:', e); }
     // arco di partenza: i piloni erano 0,3-0,9 m sopra l'asfalto; si annega di 1 m
     { const arco = g.scene.getObjectByName('ArcoSRM'); if (arco) arco.position.y -= 1.0; }
@@ -297,6 +297,7 @@ async function boot(){
     // tigli davanti al Comune (oggetti Tiglio* del blend di Ale): chioma con vento e tinta d'autunno
     g.scene.traverse(o => { if (o.isMesh && /^Tiglio/.test(o.name || '')) vestiTiglio(o); });
     try { buildTigli(); } catch (e) { console.warn('tigli:', e); }
+    buildCentroNuovo(loader).catch(e => console.warn('centro nuovo:', e));
   }, undefined, () => console.warn('maglianoC assente'));
   $('load-step').textContent = 'Lino…';
   let lg;
@@ -607,6 +608,39 @@ function buildTrailHeights(){
 // Il centro dell'arco viene dai piloni di ArcoSRM (magliano_centro.blend): valori iniziali dal blend
 // del 02/10, ricalcolati appena maglianoC.glb e' caricato (cosi' Ale puo' spostare l'arco a piacere).
 const ARCO = { x: -1555.6, z: 4890.4, L: 15, dx: 0, dz: -1 };   // centro (three), lunghezza del tratto, direzione arco -> km 0
+// ---------- centro nuovo (branch modellazione_centro): scena del paese da centro/assets/centro_edit.glb ----------
+// Partenza e arrivo davanti alla facciata del Palazzo comunale (meta' facciata, su Via S. Maria di Loreto).
+// Il tracciato GPS parte/arriva con un "gancio" sull'angolo nord del palazzo: si taglia a CN.sAtt e lo si
+// sostituisce con la polilinea arco -> incrocio -> Via Dalmazia -> tracciato (stessa cosa, al contrario, all'arrivo).
+const CN = { on: true, c: [-1566, 4866], r: 340, finish: [-1585, 4883], sAtt: 45,
+             poly: [[-1585, 4883], [-1594, 4873.5], [-1598, 4868], [-1581, 4844]],   // dall'arco fino all'imbocco di Via Dalmazia; l'ultimo tratto va al punto di attacco
+             cerchio: [-1575.5, 4874.9],      // motivo circolare a meta' piazza (incudine)
+             L: 0, cum: [], ys: null, caricato: false };
+let SMAX = 0;      // fine corsa (arrivo sotto l'arco)
+function cnPrepara(){
+  posAt(CN.sAtt, tmpA); const pts = CN.poly.concat([[tmpA.x, tmpA.z]]);
+  CN.pts = pts; CN.cum = [0]; for (let i = 1; i < pts.length; i++) CN.cum.push(CN.cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  CN.L = CN.cum[CN.cum.length - 1];
+  S0_ARCO = CN.sAtt - CN.L; SMAX = TOT - CN.sAtt + CN.L;
+  // quote ogni metro lungo la polilinea (suolo vero + strade del paese a +0,2)
+  const n = Math.ceil(CN.L), ys = [];
+  for (let k = 0; k <= n; k++) { const q = cnPunto(Math.min(k, CN.L)); let y = terraVera(q[0], q[1], 1200); if (y < -1e3) y = groundAt(q[0], q[1]); ys.push(y + 0.32); }
+  CN.ys = ys;
+  if (st.s < S0_ARCO + 0.5) st.s = S0_ARCO;
+  console.log('centro nuovo: polilinea', CN.L.toFixed(1), 'm, S0', S0_ARCO.toFixed(1), 'SMAX', SMAX.toFixed(1));
+}
+function cnPunto(d){   // punto sulla polilinea a distanza d dall'arco
+  const P = CN.pts, C = CN.cum; let i = 1; while (i < C.length - 1 && C[i] < d) i++;
+  const t = clamp((d - C[i - 1]) / Math.max(1e-6, C[i] - C[i - 1]), 0, 1);
+  return [P[i - 1][0] + (P[i][0] - P[i - 1][0]) * t, P[i - 1][1] + (P[i][1] - P[i - 1][1]) * t];
+}
+function cnPos(d, out){   // d = distanza dall'arco lungo la polilinea
+  d = clamp(d, 0, CN.L); const q = cnPunto(d);
+  let y; if (CN.ys) { const k = Math.min(CN.ys.length - 2, Math.floor(d)); y = CN.ys[k] + (CN.ys[k + 1] - CN.ys[k]) * (d - k); } else y = route.z[0];
+  // raccordo alla quota del nastro negli ultimi 4 m prima dell'attacco
+  const t0 = clamp((d - (CN.L - 4)) / 4, 0, 1); if (t0 > 0) { posAt(CN.sAtt + 0.01, tmpD); y = y * (1 - t0) + tmpD.y * t0; }
+  return out.set(q[0], y, q[1]);
+}
 let S0_ARCO = -15.0;
 let Y0_ARCO = null;      // quota del suolo vero sotto l'arco (raycast al caricamento)
 let YEXT = null;         // suolo campionato ogni metro da s=S0_ARCO a s=0
@@ -715,6 +749,7 @@ function aggiornaArco(root){
   if (p.length < 2) return;
   const cx = (p[0].x + p[1].x) / 2, cz = (p[0].z + p[1].z) / 2;
   ARCO.W = Math.max(6, p[0].distanceTo(p[1]) - 2.2);     // luce fra i piloni (centro a centro meno lo spessore)
+  if (CN.on) return;   // centro nuovo: niente retta ne' tappeto, l'arco viene posato da buildCentroNuovo
   const era = st.s <= S0_ARCO + 0.01;
   setArco(cx, cz);
   campionaTrattoArco();
@@ -723,6 +758,10 @@ function aggiornaArco(root){
   console.log('arco: centro', cx.toFixed(1), cz.toFixed(1), 'tratto', ARCO.L.toFixed(1), 'm');
 }
 function posAt(s, out){
+  if (CN.on && CN.caricato) {
+    if (s < CN.sAtt) return cnPos(s - S0_ARCO, out);                    // partenza: dall'arco al tracciato
+    if (s > TOT - CN.sAtt) return cnPos(SMAX - s, out);                 // arrivo: dal tracciato all'arco
+  }
   if (s < 0) {
     // retta dal centro dell'arco (s = S0_ARCO) all'inizio del tracciato (s = 0)
     const L = ARCO.L;
@@ -755,7 +794,7 @@ function quotaAt(s){
   return route.elev_a * lerp(route.z[i], route.z[i + 1], t) + route.elev_b;
 }
 function tanAt(s, out){
-  posAt(Math.min(s + 22, TOT), out); posAt(Math.max(s - 22, S0_ARCO), tmpD);   // anche sul tratto dell'arco la tangente guarda avanti
+  posAt(Math.min(s + 22, CN.caricato ? SMAX : TOT), out); posAt(Math.max(s - 22, S0_ARCO), tmpD);   // anche sul tratto dell'arco la tangente guarda avanti
   out.sub(tmpD);
   return out.lengthSq() > 1e-6 ? out.normalize() : out.set(1, 0, 0);
 }
@@ -887,6 +926,77 @@ function buildComignoli(tetti, nome){
   im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
   im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false; im.name = 'Comignoli_' + nome;
   scene.add(im);
+}
+// ---------- centro nuovo: carica la scena del paese, nasconde il vecchio centro, posa arco e incudine ----------
+let MAGLIANOC = null;
+async function buildCentroNuovo(loader){
+  if (!CN.on) return;
+  let g; try { g = await loadGLB(loader, 'centro/assets/centro_edit.glb?' + VER, () => {}); } catch (e) { console.warn('centro_edit.glb assente: resta il centro vecchio', e); CN.on = false; return; }
+  const via = /^(Percorso|Traguardo|Incudine_segnaposto|MotivoCircolare)/;
+  g.scene.traverse(o => {
+    if (via.test(o.name || '')) o.visible = false;
+    if (!o.isMesh) return;
+    o.castShadow = !/Terreno|Strade|Mesh_26/i.test(o.name); o.receiveShadow = true;
+    let p = o, sopra = false, terreno = false; while (p) { if (/Strade/.test(p.name)) sopra = true; if (p.name === 'Terreno') terreno = true; p = p.parent; }
+    if ((sopra || terreno) && o.material) { o.material = o.material.clone(); o.material.polygonOffset = true; o.material.polygonOffsetFactor = terreno ? -2 : -4; o.material.polygonOffsetUnits = terreno ? -2 : -4; o.renderOrder = terreno ? 0 : 1; }
+    if (/chioma/i.test(o.name) && o.material) { o.material = o.material.clone(); o.material.color.set((o.id % 2) ? '#8a9a3a' : '#6f8a35'); }
+  });
+  { const t = g.scene.getObjectByName('Terreno'); if (t) t.position.y += 0.1; }
+  g.scene.name = 'CentroNuovo'; scene.add(g.scene);
+  // vecchio centro: case, municipio, piazza, tigli e borghi entro il raggio del paese nuovo
+  const C = CN.c, R = CN.r, bb = new THREE.Box3(), cc = new THREE.Vector3();
+  const nascondi = [];
+  scene.traverse(o => {
+    if (o === g.scene || g.scene.getObjectById(o.id)) return;
+    const nm = o.name || '';
+    if (/^(Casa_|Municipio|Piazza|PiazzaSRM|Tiglio_|Borghi_|Comune_Meshy|Tappeto|Festone_|Tiglio_proc)/.test(nm) || (o.isMesh && nm === 'Terrain' && false)) {
+      bb.setFromObject(o); if (bb.isEmpty()) return; bb.getCenter(cc);
+      if (Math.hypot(cc.x - C[0], cc.z - C[1]) < R) nascondi.push(o);
+    }
+    if (o.isInstancedMesh && /^Comignoli_/.test(nm)) {
+      const M = new THREE.Matrix4(), P = new THREE.Vector3(); let n = 0;
+      for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, M); P.setFromMatrixPosition(M); if (Math.hypot(P.x - C[0], P.z - C[1]) < R) { M.makeScale(0, 0, 0); o.setMatrixAt(i, M); n++; } }
+      if (n) o.instanceMatrix.needsUpdate = true;
+    }
+  });
+  for (const o of nascondi) o.visible = false;
+  if (TAPPETO) TAPPETO.visible = false;
+  // arco di partenza (ArcoSRM di Ale) sulla strada davanti alla facciata, di traverso alla via
+  const arco = MAGLIANOC && MAGLIANOC.getObjectByName('ArcoSRM');
+  if (arco) {
+    const pil = []; arco.traverse(o => { if (o.isMesh && /^Arch_Pillar/.test(o.name || '')) { bb.setFromObject(o); pil.push(bb.getCenter(new THREE.Vector3())); } });
+    if (pil.length >= 2) {
+      const mid = pil[0].clone().add(pil[1]).multiplyScalar(0.5);
+      let yb = 1e9; arco.traverse(o => { if (o.isMesh && /^Arch_Pillar/.test(o.name || '')) { bb.setFromObject(o); yb = Math.min(yb, bb.min.y); } });
+      const a0 = Math.atan2(pil[1].x - pil[0].x, pil[1].z - pil[0].z);
+      const a1 = Math.atan2(-0.668, -0.744);                      // direzione della facciata (parallela alla via)
+      const piv = new THREE.Group(); piv.name = 'ArcoPivot'; const par = arco.parent; par.add(piv);
+      piv.position.set(mid.x, yb + 1.0, mid.z); piv.attach(arco);   // perno alla base dei piloni (erano annegati di 1 m)
+      piv.rotation.y = a1 - a0;
+      // l'arco e' alla scala di Lino (gigante): nel paese reale lo si riduce a 0,6 (luce ~8 m, pari alla carreggiata)
+      piv.scale.setScalar(CN.scalaArco || 0.6);
+      let yq = terraVera(CN.finish[0], CN.finish[1], 1200); if (yq < -1e3) yq = groundAt(CN.finish[0], CN.finish[1]);
+      piv.position.set(CN.finish[0], yq + 0.22, CN.finish[1]);
+      piv.updateMatrixWorld(true);
+    }
+  }
+  // incudine e ceppo sul cerchio della piazza (quota della piazza rialzata: suolo + 1 m)
+  if (MAGLIANOC) {
+    const inc = new THREE.Group(); inc.name = 'IncudinePivot'; const parti = [];
+    MAGLIANOC.traverse(o => { if (o.isMesh && /^Ristoro_/.test(o.name || '')) parti.push(o); });
+    if (parti.length) {
+      bb.makeEmpty(); for (const o of parti) bb.expandByObject(o); const c0 = bb.getCenter(new THREE.Vector3()); const y0 = bb.min.y;
+      MAGLIANOC.add(inc); inc.position.set(c0.x, y0, c0.z); for (const o of parti) inc.attach(o);
+      let yq = terraVera(CN.finish[0], CN.finish[1], 1200); if (yq < -1e3) yq = groundAt(CN.finish[0], CN.finish[1]);
+      inc.scale.setScalar(CN.scalaInc || 0.45);   // anche l'incudine era alla scala di Lino
+      inc.position.set(CN.cerchio[0], yq + 1.0 + 0.1, CN.cerchio[1]); inc.updateMatrixWorld(true);
+    }
+    MAGLIANOC.traverse(o => { if (/^Festone_/.test(o.name || '')) o.visible = false; });
+  }
+  CN.caricato = true;
+  cnPrepara();
+  const sNow = st.s; st.s = S0_ARCO; if (sNow > 0) st.s = sNow;
+  console.log('centro nuovo: nascosti', nascondi.length, 'oggetti del vecchio centro');
 }
 // ---------- partenza e piazza: transenne e festoni arrivano da maglianoC.glb (posizionati da Ale in
 // magliano_centro.blend: oggetti Transenna_* e Festone_*); qui solo materiali e vento ----------
@@ -1087,7 +1197,7 @@ window.addEventListener('resize', fitVia);
 function updateHUD(){
   if (Math.abs(st.s - st.lastHudS) < 4 && st.sTarget === null) return;
   st.lastHudS = st.s;
-  const km = Math.max(0, st.s) / 1000;
+  const km = (CN.caricato ? clamp(st.s - S0_ARCO, 0, SMAX - S0_ARCO) : Math.max(0, st.s)) / 1000;
   $('v-km').textContent = km.toFixed(1).replace('.', ',');
   $('v-q').innerHTML = Math.round(quotaAt(st.s)) + '<span class="unit"> m</span>';
   const sA = Math.max(st.s - 80, 0), sB = Math.min(st.s + 80, TOT);
@@ -4439,7 +4549,7 @@ function tick(){
       const vmax = VMAX * (st.hold > 2.2 ? 1.9 : 1);
       st.speed = Math.min(vmax, st.speed + ACC * dt);
     } else { st.hold = 0; st.speed = Math.max(0, st.speed - ACC * 2.4 * dt); }
-    st.s = clamp(st.s + (st.dir || st.lastDir || 1) * st.speed * dt, S0_ARCO, TOT);
+    st.s = clamp(st.s + (st.dir || st.lastDir || 1) * st.speed * dt, S0_ARCO, CN.caricato ? SMAX : TOT);
   }
   // Lino
   posAt(st.s, tmpA); tanAt(st.s, tmpB);
