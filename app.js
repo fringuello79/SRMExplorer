@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v79c';
+const VER = 'v79e';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -615,7 +615,8 @@ const ARCO = { x: -1555.6, z: 4890.4, L: 15, dx: 0, dz: -1 };   // centro (three
 const CN = { on: true, c: [-1566, 4866], r: 340, finish: [-1585, 4883], sAtt: 45,
              poly: [[-1585, 4883], [-1594, 4873.5], [-1598, 4868], [-1581, 4844]],   // dall'arco fino all'imbocco di Via Dalmazia; l'ultimo tratto va al punto di attacco
              cerchio: [-1575.5, 4874.9],      // motivo circolare a meta' piazza (incudine)
-             rNastro: 300, L: 0, cum: [], ys: null, caricato: false };
+             rNastro: 300, L: 0, cum: [], ys: null, caricato: false,
+             scala: 1.2, perno: [-1598.2, 4868.3] };   // ingrandimento del paese attorno allo spigolo della piazza su cui svolta Lino (resta fisso)
 let SMAX = 0;      // fine corsa (arrivo sotto l'arco)
 function cnPrepara(){
   posAt(CN.sAtt, tmpA); const pts = CN.poly.concat([[tmpA.x, tmpA.z]]);
@@ -932,6 +933,7 @@ let MAGLIANOC = null;
 async function buildCentroNuovo(loader){
   if (!CN.on) return;
   let g; try { g = await loadGLB(loader, 'centro/assets/centro_edit.glb?' + VER, () => {}); } catch (e) { console.warn('centro_edit.glb assente: resta il centro vecchio', e); CN.on = false; return; }
+  const bb = new THREE.Box3(), cc = new THREE.Vector3();
   const via = /^(Percorso|Traguardo|Incudine_segnaposto|MotivoCircolare|Terreno)/;   // il suolo del paese resta quello dell'Explorer (texture coerente)
   g.scene.traverse(o => {
     if (via.test(o.name || '')) o.visible = false;
@@ -942,12 +944,21 @@ async function buildCentroNuovo(loader){
     if (/chioma/i.test(o.name) && o.material) { o.material = o.material.clone(); o.material.color.set((o.id % 2) ? '#8a9a3a' : '#6f8a35'); }
   });
   { const t = g.scene.getObjectByName('Terreno'); if (t) t.position.y += 0.1; }
-  g.scene.name = 'CentroNuovo'; scene.add(g.scene);
+  g.scene.name = 'CentroNuovo';
+  // ingrandimento uniforme attorno al perno (spigolo della piazza): il perno non si muove, cosi' il tracciato
+  // di Lino nella svolta resta dov'e'; il resto del paese cresce verso l'esterno
+  const K = CN.scala || 1, PV = CN.perno; let yPv = terraVera(PV[0], PV[1], 1200); if (yPv < -1e3) yPv = groundAt(PV[0], PV[1]);
+  const sc = p => [PV[0] + (p[0] - PV[0]) * K, PV[1] + (p[1] - PV[1]) * K];
+  const wrap = new THREE.Group(); wrap.name = 'CentroNuovoScala'; wrap.position.set(PV[0], yPv, PV[1]); wrap.scale.setScalar(K);
+  g.scene.position.set(-PV[0], -yPv, -PV[1]); wrap.add(g.scene); scene.add(wrap);
+  if (K !== 1) { CN.finish = sc(CN.finish); CN.cerchio = sc(CN.cerchio); CN.poly = CN.poly.map(sc); }
+  // case del paese finite oltre il raggio (sopra quelle vecchie dell'Explorer): si tolgono
+  { let n = 0; wrap.updateMatrixWorld(true); const ed = g.scene.getObjectByName('Edifici'); if (ed) for (const h of ed.children) { bb.setFromObject(h); if (bb.isEmpty()) continue; bb.getCenter(cc); if (Math.hypot(cc.x - CN.c[0], cc.z - CN.c[1]) > CN.r - 8) { h.visible = false; n++; } } console.log('centro nuovo: case esterne tolte', n); }
   // vecchio centro: case, municipio, piazza, tigli e borghi entro il raggio del paese nuovo
-  const C = CN.c, R = CN.r, bb = new THREE.Box3(), cc = new THREE.Vector3();
+  const C = CN.c, R = CN.r;
   const nascondi = [];
   scene.traverse(o => {
-    if (o === g.scene || g.scene.getObjectById(o.id)) return;
+    if (o === wrap || wrap.getObjectById(o.id)) return;
     const nm = o.name || '';
     if (/^(Casa_|Municipio|Piazza|PiazzaSRM|Tiglio_|Borghi_|Comune_Meshy|Tappeto|Festone_|Tiglio_proc)/.test(nm) || (o.isMesh && nm === 'Terrain' && false)) {
       bb.setFromObject(o); if (bb.isEmpty()) return; bb.getCenter(cc);
@@ -993,7 +1004,7 @@ async function buildCentroNuovo(loader){
       MAGLIANOC.add(inc); inc.position.set(c0.x, y0, c0.z); for (const o of parti) inc.attach(o);
       let yq = terraVera(CN.finish[0], CN.finish[1], 1200); if (yq < -1e3) yq = groundAt(CN.finish[0], CN.finish[1]);
       inc.scale.setScalar(CN.scalaInc || 0.45);   // anche l'incudine era alla scala di Lino
-      inc.position.set(CN.cerchio[0], yq + 1.0 + 0.1, CN.cerchio[1]); inc.updateMatrixWorld(true);
+      inc.position.set(CN.cerchio[0], yq + 1.0 * (CN.scala || 1) + 0.1, CN.cerchio[1]); inc.updateMatrixWorld(true);
     }
     MAGLIANOC.traverse(o => { if (/^Festone_/.test(o.name || '')) o.visible = false; });
   }
@@ -3076,7 +3087,7 @@ function buildTigli(){
 // ---------- chiesa di Santa Maria ad Nives (Meshy decimato, 80k tri) al posto della torre stilizzata ----------
 async function buildChiesaNives(loader){
   const g = await loadGLB(loader, 'assets/chiesa_nives.glb?' + VER, () => {});
-  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; } } });
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; o.material.color.setRGB(1.18, 1.16, 1.12); } } });   // texture leggermente schiarita
   // via la torre + croce stilizzate di borghi.glb
   let px = -1375, pz = 4611;
   scene.traverse(o => { if (o.isMesh && (o.name === 'Borghi_8' || o.name === 'Borghi_9')) { o.visible = false; if (o.name === 'Borghi_8') { o.geometry.computeBoundingBox(); const c = o.geometry.boundingBox.getCenter(tmpC); o.localToWorld(c); px = c.x; pz = c.z; } } });

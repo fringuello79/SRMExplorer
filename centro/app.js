@@ -222,6 +222,7 @@ function texPietra(){
   for (let i = 0; i < 120; i++) { const x = Math.random() * 256, y = Math.random() * 256, r = 14 + Math.random() * 16; g.fillStyle = `hsl(${30 + Math.random() * 15},${12 + Math.random() * 12}%,${52 + Math.random() * 20}%)`; g.beginPath(); for (let k = 0; k < 7; k++) { const a = k / 7 * Math.PI * 2; g.lineTo(x + Math.cos(a) * r * (0.7 + Math.random() * 0.5), y + Math.sin(a) * r * (0.7 + Math.random() * 0.5)); } g.closePath(); g.fill(); }
   const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
 }
+const ESCLUSI = [481018202];
 const PALETTE = ['#f4efe4', '#efe3c9', '#e9d3a8', '#f1d7c0', '#eadfd6', '#dcd6c8', '#f3e6c0', '#e5c9a2', '#f0e9dc', '#e8c7b4'];
 function buildEdifici(){
   TEX_MURI = [texMuro(0.2), texMuro(0.8)]; TEX_PT = texPianoTerra(); TEX_TEG = texTegole(); TEX_MATTONI = texMattoni(); TEX_PIETRA = texPietra();
@@ -230,6 +231,7 @@ function buildEdifici(){
   const PIANO = 3.2;
   for (const e of DATA.edifici) {
     if (e.tipo === 'municipio') continue;        // modello di Ale
+    if (ESCLUSI.includes(e.id)) continue;         // S. Maria ad Nives: c'e' il modello di Ale nell'Explorer
     let poly = e.p.map(p => [p[0], p[1]]); if (poly.length < 3) continue;
     if (areaSegno(poly) < 0) poly.reverse();     // orientazione uniforme
     const A = Math.abs(areaSegno(poly));
@@ -478,9 +480,10 @@ function buildArredo(){
   // fontana circolare bianca di Piazza della Repubblica (dalla foto di Via Fiume) e dissuasori in ghisa
   const fz = [-1534, 4942], yf = demAt(fz[0], fz[1]);
   const bianco = new THREE.MeshStandardMaterial({ color: '#efece6', roughness: 0.7 });
-  const vasca = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.3, 0.7, 36), bianco); vasca.position.set(fz[0], yf + 0.35, fz[1]); vasca.castShadow = true; scene.add(vasca);
-  const acqua = new THREE.Mesh(new THREE.CylinderGeometry(2.9, 2.9, 0.08, 36), new THREE.MeshStandardMaterial({ color: '#6fb0d8', roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 })); acqua.position.set(fz[0], yf + 0.7, fz[1]); scene.add(acqua);
-  const getto = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.25, 1.4, 8), new THREE.MeshStandardMaterial({ color: '#dff2fb', transparent: true, opacity: 0.6 })); getto.position.set(fz[0], yf + 1.4, fz[1]); scene.add(getto);
+  const fnt = new THREE.Group(); fnt.name = 'Fontana'; scene.add(fnt);
+  const vasca = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.3, 0.7, 36), bianco); vasca.position.set(fz[0], yf + 0.35, fz[1]); vasca.castShadow = true; vasca.name = 'Fontana_vasca'; fnt.add(vasca);
+  const acqua = new THREE.Mesh(new THREE.CylinderGeometry(2.9, 2.9, 0.08, 36), new THREE.MeshStandardMaterial({ color: '#6fb0d8', roughness: 0.15, metalness: 0.1, transparent: true, opacity: 0.85 })); acqua.position.set(fz[0], yf + 0.7, fz[1]); acqua.name = 'Fontana_acqua'; fnt.add(acqua);
+  const getto = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.25, 1.4, 8), new THREE.MeshStandardMaterial({ color: '#dff2fb', transparent: true, opacity: 0.6 })); getto.position.set(fz[0], yf + 1.4, fz[1]); getto.name = 'Fontana_getto'; fnt.add(getto);
   for (let k = 0; k < 7; k++) scene.add(dissuasore(-1547 + k * 1.6 * 0.6, 4927 + k * 1.6 * 0.8, demAt(-1547 + k * 0.96, 4927 + k * 1.28)));
   // lampioni con lanterna lungo Via Santa Maria di Loreto (fra i tigli, ogni ~22 m)
   const lan = new THREE.MeshStandardMaterial({ color: '#2d2f33', roughness: 0.6, metalness: 0.5 });
@@ -635,7 +638,7 @@ let EDIT_GLB = false;
 async function exportGLB(){
   const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
   const root = new THREE.Group(); root.name = 'MaglianoCentro';
-  for (const n of ['Terreno', 'Strade', 'Edifici', 'Municipio', 'Alberi', 'Arredo', 'Percorso', 'Traguardo', 'MotivoCircolare', 'Incudine_segnaposto']) { const o = scene.getObjectByName(n); if (o) root.add(o.clone(true)); }
+  for (const n of ['Terreno', 'Strade', 'Edifici', 'Municipio', 'Alberi', 'Arredo', 'Fontana', 'Percorso', 'Traguardo', 'MotivoCircolare', 'Incudine_segnaposto']) { const o = scene.getObjectByName(n); if (o) root.add(o.clone(true)); }
   // terreno: per Blender si usa l'ortofoto come mappa (uv = uvo) al posto dello shader
   root.traverse(o => { if (o.isMesh && o.name === 'Terreno' && ORTO_TEX) { const g = o.geometry.clone(); g.setAttribute('uv', g.getAttribute('uvo')); o.geometry = g; o.material = new THREE.MeshStandardMaterial({ map: ORTO_TEX, roughness: 1 }); }
     if (o.isMesh && o.material && o.material.customProgramCacheKey && o.material.customProgramCacheKey() === 'tiglio-c') o.material = new THREE.MeshStandardMaterial({ color: '#8a9a3a', roughness: 0.9 }); });
