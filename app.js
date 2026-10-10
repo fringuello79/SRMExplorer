@@ -2773,18 +2773,40 @@ function geoPioppo(seme){
   const g = mergeGeometries(parti, false); g.computeBoundingSphere(); return g;   // ~1.400 triangoli
 }
 function geoSilene(seme){
-  // cuscino: cupola schiacciata, verde cupo; sulla sommita' facce rosa-viola (i fiori)
+  // cuscino morbido: cupola schiacciata un po' bitorzoluta, ombreggiatura liscia; i fiori stanno nella texture
   const rnd = rngDa(seme);
-  const g = new THREE.IcosahedronGeometry(0.5, 2); g.scale(1, 0.26, 0.85); g.translate(0, -0.015, 0);
-  return sfaccetta(g, rnd, 0.09, (c, y, ny, r) => {
-    if (ny > 0.55 && r() < 0.62) c.setHSL(0.86 + (r() - 0.5) * 0.04, 0.70, 0.60 + (r() - 0.5) * 0.14);
-    else c.setHSL(0.31 + (r() - 0.5) * 0.03, 0.42, 0.14 + 0.10 * Math.max(0, ny) + (r() - 0.5) * 0.04);
-  });
+  const g = new THREE.IcosahedronGeometry(0.5, 3); g.scale(1, 0.26, 0.88); g.translate(0, -0.012, 0);
+  const p = g.getAttribute('position');
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = 1 + (Math.sin(x * 23.1 + z * 17.7) * 0.5 + Math.sin(x * 41.3 - z * 29.9) * 0.3) * 0.055 + (rnd() - 0.5) * 0.02;
+    p.setXYZ(i, x * k, y * k, z * k);
+  }
+  g.computeVertexNormals(); g.computeBoundingSphere();
+  return g;
+}
+function texSilene(seme){
+  // texture procedurale: verde cupo screziato con fiori rosa-viola rotondi, piu' fitti verso la sommita' (v alto)
+  const rnd = rngDa(seme), S = 256, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const c = cv.getContext('2d');
+  c.fillStyle = '#2c4a22'; c.fillRect(0, 0, S, S);
+  for (let i = 0; i < 2600; i++) { c.fillStyle = 'hsl(' + (96 + rnd() * 20) + ',' + (30 + rnd() * 25) + '%,' + (16 + rnd() * 16) + '%)'; const r = 1 + rnd() * 3; c.beginPath(); c.arc(rnd() * S, rnd() * S, r, 0, 6.3); c.fill(); }
+  for (let i = 0; i < 520; i++) {
+    const v = Math.pow(rnd(), 0.55), y = (1 - v) * S;                 // v alto = sommita' della cupola
+    if (rnd() > 0.25 + v * 0.75) continue;
+    const x = rnd() * S, r = 3.2 + rnd() * 2.6;
+    c.fillStyle = 'hsl(' + (312 + rnd() * 16) + ',' + (62 + rnd() * 18) + '%,' + (58 + rnd() * 14) + '%)';
+    for (let k = 0; k < 5; k++) { const aa = k / 5 * 6.283; c.beginPath(); c.arc(x + Math.cos(aa) * r * 0.55, y + Math.sin(aa) * r * 0.55, r * 0.5, 0, 6.3); c.fill(); }
+    c.fillStyle = '#f7e9a8'; c.beginPath(); c.arc(x, y, r * 0.22, 0, 6.3); c.fill();
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 4;
+  return t;
 }
 function buildPiantaLowPoly(cfg){
   const K = (route.lino_h || 7.8) / 1.7;
   const geo = cfg.geo;
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, flatShading: true });
+  const m = cfg.map ? new THREE.MeshStandardMaterial({ map: cfg.map, roughness: 0.95, metalness: 0 })
+                    : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, flatShading: true });
   const vento = cfg.vento || 0, hMax = cfg.hVento || 10;
   if (vento) m.onBeforeCompile = sh => {
     sh.uniforms.uT = { value: 0 }; VENTO_SH.push(sh);
@@ -2842,8 +2864,8 @@ function buildGenziane(){
     zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
   // Silene acaulis: cuscinetti nei pavimenti calcarei della cresta Sevice-Cafornia (km 15-18,6).
   // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
-  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), seme: 15301, pendenza: true, ombra: false, sc0: 0.6, sc1: 0.6, affonda: -0.02, rGrp: 1.6,
-    zone: [{ a: 15100, b: 16400, n: 22, d0: 1.0, d1: 4.5, grp: [3, 7] }, { a: 16400, b: 18600, n: 30, d0: 1.0, d1: 5, grp: [3, 7] }], scheda: schedaSilene });
+  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, ombra: false, sc0: 0.55, sc1: 0.6, affonda: -0.09, rGrp: 1.6,
+    zone: [{ a: 15100, b: 16400, n: 18, d0: 1.0, d1: 4.5, grp: [2, 5] }, { a: 16400, b: 18600, n: 26, d0: 1.0, d1: 5, grp: [2, 5] }], scheda: schedaSilene });
   else buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
     zone: [{ a: 15100, b: 16400, n: 18, d0: 1.2, d1: 4.5 }, { a: 16400, b: 18600, n: 24, d0: 1.2, d1: 5 }], scheda: schedaSilene });
 }
