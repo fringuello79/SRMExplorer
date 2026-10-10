@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const VER = 'v80';
 
@@ -2674,6 +2675,7 @@ async function buildMezzoPC(loader){
 // adonide ricurva a bordo sentiero prima della Capanna di Sevice (km 14,2-14,6, ~50 piante nella
 // Guida) e sulla cresta Velino-Cafornia (km 17,3-18,4, ~200 piante): qui se ne mostrano alcune.
 const IMPOSTORS = [];
+const FLORA_3D = !/flora=2d/.test(location.search);   // ?flora=2d per confrontare con gli sprite
 function buildImpostor(cfg){
   const tex = new THREE.TextureLoader().load('assets/' + cfg.file + '?' + VER);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
@@ -2739,6 +2741,93 @@ function buildImpostor(cfg){
   IMPOSTORS.push(im);
   return im;
 }
+
+// ---------- piante low-poly 3D, nello stile degli alberi a cono del paesaggio ----------
+// Geometria costruita in codice (metri), sfaccettata, colori per vertice + tinta per pianta,
+// vento nello shader, una InstancedMesh per specie, cliccabili come gli impostor.
+function rngDa(seme){ let sd = seme; return () => (sd = (sd * 16807) % 2147483647) / 2147483647; }
+function sfaccetta(g, rnd, amp, colFn){
+  // sposta i vertici a caso (amp relativo al raggio), poi sfaccetta e colora per faccia
+  const p = g.getAttribute('position');
+  for (let i = 0; i < p.count; i++) { const k = 1 + (rnd() - 0.5) * 2 * amp; p.setXYZ(i, p.getX(i) * k, p.getY(i) * k, p.getZ(i) * k); }
+  const f = g.toNonIndexed(); f.computeVertexNormals();
+  const fp = f.getAttribute('position'), fn = f.getAttribute('normal'), col = new Float32Array(fp.count * 3), c = new THREE.Color();
+  for (let i = 0; i < fp.count; i += 3) {
+    colFn(c, (fp.getY(i) + fp.getY(i + 1) + fp.getY(i + 2)) / 3, (fn.getY(i) + fn.getY(i + 1) + fn.getY(i + 2)) / 3, rnd);
+    for (let j = 0; j < 3; j++) { col[(i + j) * 3] = c.r; col[(i + j) * 3 + 1] = c.g; col[(i + j) * 3 + 2] = c.b; }
+  }
+  f.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return f;
+}
+function geoPioppo(seme){
+  const rnd = rngDa(seme), parti = [];
+  // tronco: leggermente conico, 3,2 m fino alla chioma; corteccia grigio-verde chiara
+  const tr = new THREE.CylinderGeometry(0.17, 0.30, 4.2, 7, 1); tr.translate(0, 2.1, 0);
+  parti.push(sfaccetta(tr, rnd, 0.04, (c, y, ny, r) => c.setHSL(0.19, 0.08, 0.50 + r() * 0.10)));
+  // chioma: lobi sovrapposti (ovoide allungato come il pioppo), giallo d'autunno piu' chiaro in alto
+  const lobi = [[0, 7.6, 0, 2.3, 1.55], [0.9, 6.2, 0.4, 1.6, 1.3], [-0.9, 6.5, -0.3, 1.5, 1.3], [0.2, 9.8, -0.5, 1.4, 1.5], [-0.3, 4.6, 0.9, 1.2, 1.1]];
+  for (const [x, y, z, r, sy] of lobi) {
+    const g = new THREE.IcosahedronGeometry(r, 2); g.scale(1, sy, 1); g.translate(x, y, z);
+    parti.push(sfaccetta(g, rnd, 0.11, (c, yy, ny, rr) => c.setHSL(0.11 + (rr() - 0.5) * 0.03, 0.78, 0.42 + 0.10 * ny + (yy - 4) / 70 + (rr() - 0.5) * 0.08)));
+  }
+  const g = mergeGeometries(parti, false); g.computeBoundingSphere(); return g;   // ~1.400 triangoli
+}
+function geoSilene(seme){
+  // cuscino: cupola schiacciata, verde cupo; sulla sommita' facce rosa-viola (i fiori)
+  const rnd = rngDa(seme);
+  const g = new THREE.IcosahedronGeometry(0.5, 2); g.scale(1, 0.26, 0.85); g.translate(0, -0.015, 0);
+  return sfaccetta(g, rnd, 0.09, (c, y, ny, r) => {
+    if (ny > 0.55 && r() < 0.62) c.setHSL(0.86 + (r() - 0.5) * 0.04, 0.70, 0.60 + (r() - 0.5) * 0.14);
+    else c.setHSL(0.31 + (r() - 0.5) * 0.03, 0.42, 0.14 + 0.10 * Math.max(0, ny) + (r() - 0.5) * 0.04);
+  });
+}
+function buildPiantaLowPoly(cfg){
+  const K = (route.lino_h || 7.8) / 1.7;
+  const geo = cfg.geo;
+  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0, flatShading: true });
+  const vento = cfg.vento || 0, hMax = cfg.hVento || 10;
+  if (vento) m.onBeforeCompile = sh => {
+    sh.uniforms.uT = { value: 0 }; VENTO_SH.push(sh);
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uT;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+{ vec4 wp = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0); float fase = wp.x * 0.05 + wp.z * 0.037; float h = clamp(position.y / ${hMax.toFixed(1)}, 0.0, 1.0);
+  float sw = sin(uT * 1.7 + fase) * 0.12 + sin(uT * 3.1 + fase * 1.7) * 0.05 + sin(uT * 6.3 + position.y * 2.0 + fase) * 0.02;
+  transformed.x += sw * h * h * ${vento.toFixed(2)}; transformed.z += sw * h * h * ${(vento * 0.6).toFixed(2)}; }`);
+  };
+  m.customProgramCacheKey = () => 'lowpoly-' + cfg.nome;
+  const rnd = rngDa(cfg.seme), posti = [];
+  for (const z of cfg.zone) for (let k = 0; k < z.n; k++) {
+    const sS = z.a + rnd() * (z.b - z.a);
+    const lato = rnd() < 0.5 ? -1 : 1, dist = z.d0 + rnd() * (z.d1 - z.d0);
+    posAt(sS, tmpA); tanAt(sS, tmpB);
+    const cx = tmpA.x - tmpB.z * dist * K * lato, cz = tmpA.z + tmpB.x * dist * K * lato;
+    // colonie: attorno al punto, da grp[0] a grp[1] piante entro cfg.rGrp metri
+    const nG = z.grp ? z.grp[0] + Math.floor(rnd() * (z.grp[1] - z.grp[0] + 1)) : 1;
+    for (let j = 0; j < nG; j++) {
+      const ang = rnd() * Math.PI * 2, rr = nG > 1 ? Math.sqrt(rnd()) * (cfg.rGrp || 1.5) * K : 0;
+      const x = cx + Math.cos(ang) * rr, z2 = cz + Math.sin(ang) * rr;
+      let y = terraVera(x, z2, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z2);
+      posti.push([x, y + (cfg.affonda || 0), z2, rnd() * Math.PI * 2, (cfg.sc0 || 0.85) + rnd() * (cfg.sc1 || 0.3), sS]);
+    }
+  }
+  const im = new THREE.InstancedMesh(geo, m, posti.length);
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(), S = new THREE.Vector3(), P = new THREE.Vector3();
+  const up = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3(), Qt = new THREE.Quaternion(), col = new THREE.Color();
+  posti.forEach((p, i) => {
+    P.set(p[0], p[1], p[2]); Q.setFromEuler(E.set(0, p[3], 0)); S.setScalar(p[4] * K);
+    if (cfg.pendenza) {
+      const h = 1.2, gx = (terraVera(p[0] + h, p[2], p[1] + 6) - terraVera(p[0] - h, p[2], p[1] + 6)) / (2 * h), gz = (terraVera(p[0], p[2] + h, p[1] + 6) - terraVera(p[0], p[2] - h, p[1] + 6)) / (2 * h);
+      if (Math.abs(gx) < 3 && Math.abs(gz) < 3) { nrm.set(-gx, 1, -gz).normalize(); Qt.setFromUnitVectors(up, nrm); Q.premultiply(Qt); }
+    }
+    M.compose(P, Q, S); im.setMatrixAt(i, M);
+    const r = rnd(); col.setHSL(0, 0, 0.88 + r * 0.24); im.setColorAt(i, col);   // tinta per pianta (chiaro/scuro)
+  });
+  im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
+  im.castShadow = cfg.ombra !== false; im.receiveShadow = true; im.frustumCulled = false; im.name = cfg.nome;
+  im.userData.posti = posti; im.userData.scheda = cfg.scheda;
+  scene.add(im); IMPOSTORS.push(im);
+  return im;
+}
 function buildGenziane(){
   buildImpostor({ nome: 'Genziane', file: 'genziana.png', layout: 'colonne', hReale: 1.4, aspetto: 0.5, seme: 19702,
     zone: [{ a: 19700, b: 21000, n: 22, d0: 4, d1: 18 }], scheda: schedaGenziana });
@@ -2747,11 +2836,15 @@ function buildGenziane(){
   // Pioppo tremulo in veste d'autunno (giallo): boscaglie umide nelle conche fresche. Il tracciato
   // scende in una conca a ~930 m fra il km 6,3 e il km 7 (la quota piu' bassa della salita) e ne
   // tocca un'altra in discesa verso i 1.100 m (km 24,6-25): tre alberi qui, due la'.
-  buildImpostor({ nome: 'Pioppi', file: 'pioppo.webp', layout: 'colonne', hReale: 12, aspetto: 0.67, seme: 6401, vento: 0.25, sc0: 0.85, sc1: 0.35, luce: 0.45,
+  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Pioppi', geo: geoPioppo(64), seme: 6401, vento: 1.4, hVento: 11, sc0: 0.9, sc1: 0.35,
+    zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
+  else buildImpostor({ nome: 'Pioppi', file: 'pioppo.webp', layout: 'colonne', hReale: 12, aspetto: 0.67, seme: 6401, vento: 0.25, sc0: 0.85, sc1: 0.35, luce: 0.45,
     zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
   // Silene acaulis: cuscinetti nei pavimenti calcarei della cresta Sevice-Cafornia (km 15-18,6).
   // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
-  buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
+  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), seme: 15301, pendenza: true, ombra: false, sc0: 0.6, sc1: 0.6, affonda: -0.02, rGrp: 1.6,
+    zone: [{ a: 15100, b: 16400, n: 22, d0: 1.0, d1: 4.5, grp: [3, 7] }, { a: 16400, b: 18600, n: 30, d0: 1.0, d1: 5, grp: [3, 7] }], scheda: schedaSilene });
+  else buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
     zone: [{ a: 15100, b: 16400, n: 18, d0: 1.2, d1: 4.5 }, { a: 16400, b: 18600, n: 24, d0: 1.2, d1: 5 }], scheda: schedaSilene });
 }
 function schedaPioppo(sS){
