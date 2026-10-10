@@ -126,6 +126,27 @@ html,body{height:100%;overflow:hidden;background:var(--verde);color:var(--avorio
   font-size:10px;line-height:1.5;letter-spacing:.03em;color:var(--avorio);text-transform:uppercase;
   text-align:left;opacity:0;transition:opacity .45s}
 #spin-chip b{color:var(--arancio)}
+
+/* ---------- scelta del personaggio (loader) ---------- */
+#avatars{display:none;gap:10px;justify-content:center;margin:14px auto 0;flex-wrap:wrap;max-width:94vw}
+#avatars.on{display:flex}
+.av{position:relative;width:118px;padding:9px 6px 8px;border:1px solid rgba(243,239,226,.22);border-radius:10px;
+  background:rgba(20,48,31,.55);color:var(--avorio);font-family:Oswald,sans-serif;cursor:pointer;text-align:center;
+  transition:border-color .2s,background .2s}
+.av .lab{display:block;font-size:11px;letter-spacing:.1em;text-transform:uppercase;line-height:1.25;min-height:28px}
+.av .ico{display:block;width:44px;height:44px;margin:6px auto 2px}
+.av.sel{border-color:var(--arancio);background:rgba(244,149,31,.12);box-shadow:0 0 0 1px var(--arancio) inset}
+.av.sel .lab,.av.sel .ico{color:var(--arancio)}
+.av.off{cursor:default;border-style:dashed;border-color:rgba(243,239,226,.18);background:rgba(20,48,31,.28)}
+.av.off .lab{color:var(--grigio)}
+.av.off .ico{opacity:.28}
+.av .q{position:absolute;left:50%;top:50%;transform:translate(-50%,-32%);font-family:Anton,sans-serif;font-size:30px;
+  color:var(--arancio);text-shadow:0 2px 6px rgba(0,0,0,.6);pointer-events:none}
+.av .nota{display:block;font-family:"JetBrains Mono",monospace;font-size:8px;letter-spacing:.06em;color:var(--grigio);
+  text-transform:uppercase;margin-top:2px;line-height:1.3}
+#avatars-h{display:none;margin:18px 0 -4px;font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--grigio)}
+#avatars-h.on{display:block}
+@media (max-height:740px){#spinbox{height:260px}#spin-img{height:260px;width:195px}.av{width:104px}.av .ico{width:36px;height:36px}}
 /* ---------- modalità grifone ---------- */
 #fly{display:none;position:fixed;inset:0;z-index:11;pointer-events:none}
 body.grif #fly{display:block}
@@ -251,7 +272,7 @@ body.grif.tour #ctrls{bottom:calc(108px + env(safe-area-inset-bottom))}
     <div class="lab" id="g-lab">Cancello</div>
     <div class="val" id="v-g">&mdash;</div>
   </div>
-  <div id="logo-top"><img src="assets/srm_logo.png?v=78" alt="Skyrace del Maglio"></div>
+  <div id="logo-top"><img src="assets/srm_logo.png?v=80" alt="Skyrace del Maglio"></div>
   <div class="slot" id="slot-sent">
     <div id="chip">E1</div>
     <div id="sent-lab">SENTIERO</div>
@@ -297,7 +318,9 @@ body.grif.tour #ctrls{bottom:calc(108px + env(safe-area-inset-bottom))}
 <div class="cover" id="loader">
   <div id="load-t">SRM <span>EXPLORER</span></div>
   <div id="load-sub">Skyrace del Maglio 2026 · percorso in 3D</div>
-  <img id="lino-nome" src="assets/lino_nome.png?v=78" alt="LINO">
+  <div id="avatars-h">Con chi esplori?</div>
+  <div id="avatars"></div>
+  <img id="lino-nome" src="assets/lino_nome.png?v=80" alt="LINO">
   <div id="spinbox">
     <div id="spin-img"></div>
     <svg id="spin-svg"></svg>
@@ -322,6 +345,6 @@ body.grif.tour #ctrls{bottom:calc(108px + env(safe-area-inset-bottom))}
   "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
 }}
 </script>
-<script type="module" src="app.js?v=78"></script>
+<script type="module" src="app.js?v=80"></script>
 </body>
 </html>

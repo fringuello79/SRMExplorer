@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-const VER = 'v78';
+const VER = 'v80';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -34,9 +34,37 @@ const st = {
   s: 60,            // ascissa curvilinea in metri
   sTarget: null,    // teletrasporto dolce (click sul profilo)
   dir: 0, speed: 0, lastDir: 1, hold: 0, view: 'follow', follow: true, ready: false,
-  keys: new Set(), lastHudS: -1, curZone: -1, curPoi: -1
+  keys: new Set(), lastHudS: -1, curZone: -1, curPoi: -1,
+  avatar: 'lino'    // personaggio scelto nel loader (vale per questa esplorazione, non si salva)
 };
 const VMAX = 175, ACC = 240, VTELE = 3600;
+// ---------- scelta del personaggio (nel loader, prima di partire) ----------
+// Lino e' sempre il primo e l'unico attivo. Vincitore e vincitrice della SRM 2026 compaiono come
+// sagome con il punto interrogativo finche' non ci sono modello e liberatoria: per attivarli basta
+// mettere attivo: true e indicare il glb (stesso scheletro Mixamo di lino2.glb, stesse tre clip).
+// La scelta vale per la singola esplorazione: a ogni nuovo ingresso si sceglie di nuovo.
+const AVATARS = [
+  { id: 'lino', nome: 'Lino', attivo: true },
+  { id: 'vincitore', nome: 'Vincitore<br>SRM 2026', attivo: false, nota: 'si svela dopo il 18 ottobre' },
+  { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', attivo: false, nota: 'si svela dopo il 18 ottobre' }
+];
+const SAGOMA = '<svg class="ico" viewBox="0 0 44 44" fill="currentColor" aria-hidden="true"><circle cx="27" cy="7" r="4.2"/>' +
+  '<path d="M23.5 12.5c2.4-.6 4.3.6 5 2.4l2.6 6.3 6.4 2.4c1.1.4 1.6 1.6 1.2 2.6-.4 1-1.5 1.5-2.6 1.1l-7.6-2.8c-.7-.3-1.2-.8-1.5-1.5l-1.1-2.6-3.1 6.2 5.2 4.8c.5.5.8 1.2.7 1.9l-1.2 8.4c-.2 1.2-1.3 2-2.5 1.8-1.2-.2-2-1.3-1.8-2.5l1-7.1-6.1-5.4-4.3 6.6c-.3.5-.8.8-1.4.9l-7.9 1.2c-1.2.2-2.3-.6-2.5-1.8-.2-1.2.6-2.3 1.8-2.5l6.8-1 6.3-10.5-3.7 1.4-2.2 5.1c-.5 1.1-1.7 1.6-2.8 1.1-1.1-.5-1.6-1.7-1.1-2.8l2.8-6.4c.3-.6.8-1.1 1.4-1.3z"/></svg>';
+function buildAvatarPicker(){
+  const box = $('avatars'), h = $('avatars-h'); if (!box) return;
+  box.innerHTML = '';
+  for (const av of AVATARS) {
+    const d = document.createElement('div');
+    d.className = 'av' + (av.attivo ? (st.avatar === av.id ? ' sel' : '') : ' off');
+    d.setAttribute('role', 'button'); d.setAttribute('aria-disabled', av.attivo ? 'false' : 'true');
+    d.innerHTML = '<span class="lab">' + av.nome + '</span>' + SAGOMA + (av.attivo ? '' : '<span class="q">?</span>') +
+      (av.nota && !av.attivo ? '<span class="nota">' + av.nota + '</span>' : '');
+    if (av.attivo) d.onclick = () => { st.avatar = av.id; box.querySelectorAll('.av').forEach(e => e.classList.remove('sel')); d.classList.add('sel'); };
+    box.appendChild(d);
+  }
+  box.classList.add('on'); h.classList.add('on');
+}
+
 let route, N, TOT, renderer, scene, camera, controls, clock;
 let lino, mixer, action, grifTpl, grifs = [], pinGroup;
 let elevSamp = [], profCv, profCtx, miniCv, miniCtx, miniPath;
@@ -339,6 +367,7 @@ async function boot(){
     };
     $('load-barw').style.display = 'none';
     $('load-step').style.display = 'none';
+    try { buildAvatarPicker(); } catch (e) { console.warn('avatar:', e); }
     const go = $('go-btn');
     go.style.display = 'inline-block';
     go.onclick = chiudi;
@@ -2648,7 +2677,7 @@ const IMPOSTORS = [];
 function buildImpostor(cfg){
   const tex = new THREE.TextureLoader().load('assets/' + cfg.file + '?' + VER);
   tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  const H = cfg.hReale * ((route.lino_h || 7.8) / 1.7), W = H * cfg.aspetto;
+  const H = cfg.hReale * ((route.lino_h || 7.8) / 1.7), W = cfg.larg ? cfg.larg * ((route.lino_h || 7.8) / 1.7) : H * cfg.aspetto;
   const pos = [], uv = [], idx = [];
   const quad = (ax, az, u0, v0, u1, v1) => {
     const b = pos.length / 3;
@@ -2656,11 +2685,24 @@ function buildImpostor(cfg){
     uv.push(u0, v0, u1, v0, u1, v1, u0, v1);
     idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
   };
+  // quadrato orizzontale (vista dall'alto) a quota yq, per le piante a cuscino
+  const piano = (yq, u0, v0, u1, v1) => {
+    const b = pos.length / 3, L = cfg.larg * ((route.lino_h || 7.8) / 1.7) / 2;
+    pos.push(-L, yq, -L, L, yq, -L, L, yq, L, -L, yq, L);
+    uv.push(u0, v1, u1, v1, u1, v0, u0, v0);
+    idx.push(b, b + 2, b + 1, b, b + 3, b + 2);
+  };
   if (cfg.layout === 'colonne') { quad(1, 0, 0, 0, 0.5, 1); quad(0, 1, 0.5, 0, 1, 1); }
+  else if (cfg.layout === 'cuscino') {
+    // atlante 1024x1024: alto in [128..896]x[0..768] (dall'alto), fianchi in righe da 128 px in basso
+    quad(1, 0, 0, 0.125, 1, 0.25); quad(0, 1, 0, 0, 1, 0.125);
+    piano(H * 0.45, 0.125, 0.25, 0.875, 1);
+  }
   else { quad(1, 0, 0, 0.5, 1, 1); quad(0, 1, 0, 0, 1, 0.5); }      // 'righe': vista 1 sopra, vista 2 sotto
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2)); g.setIndex(idx); g.computeVertexNormals();
   const m = new THREE.MeshStandardMaterial({ map: tex, alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.9, metalness: 0 });
+  if (cfg.luce) { m.emissive = new THREE.Color(0xffffff); m.emissiveMap = tex; m.emissiveIntensity = cfg.luce; }   // la resa e' gia' illuminata: schiarisce
   const vento = cfg.vento || 0.08;
   m.onBeforeCompile = sh => {
     sh.uniforms.uT = { value: 0 }; VENTO_SH.push(sh);
@@ -2678,11 +2720,19 @@ function buildImpostor(cfg){
     posAt(sS, tmpA); tanAt(sS, tmpB);
     const x = tmpA.x - tmpB.z * dist * lato, z2 = tmpA.z + tmpB.x * dist * lato;
     let y = terraVera(x, z2, tmpA.y + 5); if (y < -1e3) y = groundAt(x, z2);
-    posti.push([x, y - 0.05, z2, rnd() * Math.PI, 0.8 + rnd() * 0.45, sS]);
+    posti.push([x, y - 0.05, z2, rnd() * Math.PI, (cfg.sc0 || 0.8) + rnd() * (cfg.sc1 || 0.45), sS]);
   }
   const im = new THREE.InstancedMesh(g, m, posti.length);
   const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(), S = new THREE.Vector3(), P = new THREE.Vector3();
-  posti.forEach((p, i) => { P.set(p[0], p[1], p[2]); Q.setFromEuler(E.set(0, p[3], 0)); S.setScalar(p[4]); M.compose(P, Q, S); im.setMatrixAt(i, M); });
+  const up = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3(), Qt = new THREE.Quaternion();
+  posti.forEach((p, i) => {
+    P.set(p[0], p[1], p[2]); Q.setFromEuler(E.set(0, p[3], 0)); S.setScalar(p[4]);
+    if (cfg.layout === 'cuscino') {   // i cuscini seguono la pendenza del suolo
+      const h = 1.2, gx = (terraVera(p[0] + h, p[2], p[1] + 6) - terraVera(p[0] - h, p[2], p[1] + 6)) / (2 * h), gz = (terraVera(p[0], p[2] + h, p[1] + 6) - terraVera(p[0], p[2] - h, p[1] + 6)) / (2 * h);
+      if (Math.abs(gx) < 3 && Math.abs(gz) < 3) { nrm.set(-gx, 1, -gz).normalize(); Qt.setFromUnitVectors(up, nrm); Q.premultiply(Qt); }
+    }
+    M.compose(P, Q, S); im.setMatrixAt(i, M);
+  });
   im.instanceMatrix.needsUpdate = true; im.castShadow = cfg.ombra !== false; im.frustumCulled = false; im.name = cfg.nome;
   im.userData.posti = posti; im.userData.scheda = cfg.scheda;
   scene.add(im);
@@ -2694,6 +2744,33 @@ function buildGenziane(){
     zone: [{ a: 19700, b: 21000, n: 22, d0: 4, d1: 18 }], scheda: schedaGenziana });
   buildImpostor({ nome: 'Adonidi', file: 'adonide.png', layout: 'righe', hReale: 0.38, aspetto: 1.85, seme: 14201, vento: 0.03,
     zone: [{ a: 14200, b: 14620, n: 14, d0: 1.5, d1: 6 }, { a: 17300, b: 18400, n: 22, d0: 2, d1: 9 }], scheda: schedaAdonide });
+  // Pioppo tremulo in veste d'autunno (giallo): boscaglie umide nelle conche fresche. Il tracciato
+  // scende in una conca a ~930 m fra il km 6,3 e il km 7 (la quota piu' bassa della salita) e ne
+  // tocca un'altra in discesa verso i 1.100 m (km 24,6-25): tre alberi qui, due la'.
+  buildImpostor({ nome: 'Pioppi', file: 'pioppo.webp', layout: 'colonne', hReale: 12, aspetto: 0.67, seme: 6401, vento: 0.25, sc0: 0.85, sc1: 0.35, luce: 0.45,
+    zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
+  // Silene acaulis: cuscinetti nei pavimenti calcarei della cresta Sevice-Cafornia (km 15-18,6).
+  // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
+  buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
+    zone: [{ a: 15100, b: 16400, n: 18, d0: 1.2, d1: 4.5 }, { a: 16400, b: 18600, n: 24, d0: 1.2, d1: 5 }], scheda: schedaSilene });
+}
+function schedaPioppo(sS){
+  const km = (sS / 1000).toFixed(1).replace('.', ',');
+  openCard('<h2>Pioppo tremulo</h2><h3><i>Populus tremula</i> · km ' + km + '</h3>' +
+    '<p>L’albero che «trema»: il picciolo delle foglie è appiattito e basta un filo d’aria perché tutta la chioma frusci e scintilli. In ottobre vira a un <b>giallo intenso</b>, inconfondibile anche di corsa; la corteccia è liscia e grigio-verde.</p>' +
+    '<table><tr><th>Dove</th><td>Boscaglie umide nelle conche fresche e lungo gli impluvi, insieme al nocciolo: la sua presenza tradisce acqua nel suolo. Qui il tracciato scende nella conca più bassa della salita.</td></tr>' +
+    '<tr><th>Come vive</th><td>Specie pioniera e di luce, cresce in fretta e si propaga per polloni dalle radici: un gruppo di pioppi vicini è spesso un unico individuo.</td></tr>' +
+    '<tr><th>Per chi corre</th><td>Dove ci sono i pioppi il fondo resta umido e scivoloso anche con il sole: attenzione a radici e foglie bagnate.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026 (Boschi e arbusteti).</p>');
+}
+function schedaSilene(sS){
+  const km = (sS / 1000).toFixed(1).replace('.', ',');
+  openCard('<h2>Silene a cuscinetto</h2><h3><i>Silene acaulis</i> · km ' + km + '</h3>' +
+    '<p>Un cuscino compattissimo di foglioline, largo una mano e alto due dita, che si stringe su sé stesso per resistere a gelo e vento. <b>Fiorisce fra giugno e luglio</b>, quando si copre di piccoli fiori rosa-viola: qui la vedi in fiore per riconoscerla, ma a ottobre è solo un cuscino verde fra i sassi.</p>' +
+    '<table><tr><th>Dove</th><td>Fessure dei pavimenti calcarei sulla cresta fra Sevice e Cafornia (km 15–18,6), insieme a <i>Saxifraga speciosa</i>: la roccia nuda incisa dall’acqua.</td></tr>' +
+    '<tr><th>Età</th><td>Cresce di pochi millimetri l’anno: un cuscino largo una mano può avere decenni di vita.</td></tr>' +
+    '<tr><th>Attenzione</th><td>È l’habitat del percorso oggi in condizioni migliori (8240*, prioritario) e la sua tenuta dipende da un gesto solo: <b>corri sulla roccia, non sui cuscinetti</b>. Un piede fuori sentiero cancella mezzo secolo di crescita.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026 (Alta quota); Studio di Incidenza Ambientale 2026.</p>');
 }
 // ---------- coturnici: un gruppetto fermo sui pascoli sassosi sopra Passo Le Forche (km ~10,7) ----------
 // Il modello (semplificato, 6.000 triangoli) guarda verso +z e poggia su un sasso: si posa su terraVera,
