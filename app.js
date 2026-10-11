@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const VER = 'v80';
 
@@ -2746,8 +2746,11 @@ function buildImpostor(cfg){
 // Geometria costruita in codice (metri), sfaccettata, colori per vertice + tinta per pianta,
 // vento nello shader, una InstancedMesh per specie, cliccabili come gli impostor.
 function rngDa(seme){ let sd = seme; return () => (sd = (sd * 16807) % 2147483647) / 2147483647; }
-function sfaccetta(g, rnd, amp, colFn){
-  // sposta i vertici a caso (amp relativo al raggio), poi sfaccetta e colora per faccia
+function sfaccetta(g0, rnd, amp, colFn){
+  // sposta i vertici a caso (amp relativo al raggio), poi sfaccetta e colora per faccia.
+  // Le geometrie poliedriche di three.js NON condividono i vertici fra le facce: prima si saldano
+  // (mergeVertices), altrimenti lo spostamento apre fessure fra i triangoli.
+  const g = mergeVertices(g0, 1e-4);
   const p = g.getAttribute('position');
   for (let i = 0; i < p.count; i++) { const k = 1 + (rnd() - 0.5) * 2 * amp; p.setXYZ(i, p.getX(i) * k, p.getY(i) * k, p.getZ(i) * k); }
   const f = g.toNonIndexed(); f.computeVertexNormals();
@@ -2775,7 +2778,7 @@ function geoPioppo(seme){
 function geoSilene(seme){
   // cuscino morbido: cupola schiacciata un po' bitorzoluta, ombreggiatura liscia; i fiori stanno nella texture
   const rnd = rngDa(seme);
-  const g = new THREE.IcosahedronGeometry(0.5, 3); g.scale(1, 0.26, 0.88); g.translate(0, -0.012, 0);
+  const g = mergeVertices(new THREE.IcosahedronGeometry(0.5, 3), 1e-4); g.scale(1, 0.26, 0.88); g.translate(0, -0.012, 0);
   const p = g.getAttribute('position');
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
@@ -2802,11 +2805,20 @@ function texSilene(seme){
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 4;
   return t;
 }
+// fattore radiale della forma del masso in un punto della sfera unitaria (usato anche per posare i cuscini)
+function bozzaRoccia(x, y, z){ return 1 + 0.10 * (Math.sin(x * 2.3 + z * 1.7) * Math.cos(y * 2.9 - x * 1.1)) + 0.06 * Math.sin(x * 5.1 + y * 4.3 + z * 3.7); }
 function geoRoccia(seme){
   // blocco di calcare: ellissoide schiacciato e sfaccettato, grigio chiaro con facce piu' scure in basso
   const rnd = rngDa(seme);
-  const g = new THREE.IcosahedronGeometry(1, 2);   // sfera unitaria: le dimensioni le da' l'istanza (rx, ry, rz)
-  return sfaccetta(g, rnd, 0.08, (c, y, ny, r) => c.setHSL(0.10 + (r() - 0.5) * 0.03, 0.05 + r() * 0.05, 0.17 + 0.09 * ny + (r() - 0.5) * 0.06));
+  const g = new THREE.IcosahedronGeometry(1, 3);   // sfera unitaria: le dimensioni le da' l'istanza (rx, ry, rz)
+  // bozze larghe e coerenti (rumore sulla posizione) piu' una grana fine: forma da masso, non da palla
+  const p = g.getAttribute('position');
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = bozzaRoccia(x, y, z);
+    p.setXYZ(i, x * k, y * k, z * k);
+  }
+  return sfaccetta(g, rnd, 0.025, (c, y, ny, r) => c.setHSL(0.10 + (r() - 0.5) * 0.03, 0.05 + r() * 0.05, 0.17 + 0.09 * ny + (r() - 0.5) * 0.06));
 }
 function buildPiantaLowPoly(cfg){
   const K = (route.lino_h || 7.8) / 1.7;
@@ -2847,8 +2859,8 @@ function buildPiantaLowPoly(cfg){
       const ang = rnd() * Math.PI * 2;
       if (roccia) {
         // posizione sulla superficie superiore dell'ellissoide della roccia (coordinate locali, poi ruotate)
-        const u = Math.sqrt(rnd()) * 0.72, lx = Math.cos(ang) * u * roccia.rx, lz = Math.sin(ang) * u * roccia.rz;
-        const ly = roccia.ry * Math.sqrt(Math.max(0, 1 - (lx / roccia.rx) ** 2 - (lz / roccia.rz) ** 2)) * 0.92;
+        const u = Math.sqrt(rnd()) * 0.72, ux = Math.cos(ang) * u, uz = Math.sin(ang) * u, uy = Math.sqrt(Math.max(0, 1 - ux * ux - uz * uz));
+        const kb = bozzaRoccia(ux, uy, uz) * 0.97, lx = ux * kb * roccia.rx, ly = uy * kb * roccia.ry, lz = uz * kb * roccia.rz;
         const loc = new THREE.Vector3(lx, ly, lz).applyQuaternion(roccia.q);
         const n = new THREE.Vector3(lx / roccia.rx ** 2, ly / roccia.ry ** 2, lz / roccia.rz ** 2).normalize().applyQuaternion(roccia.q);
         posti.push([roccia.x + loc.x, roccia.y + loc.y + (cfg.affonda || 0), roccia.z + loc.z, rnd() * Math.PI * 2, (cfg.sc0 || 0.85) + rnd() * (cfg.sc1 || 0.3), sS, n]);
