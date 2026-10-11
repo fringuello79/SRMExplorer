@@ -446,7 +446,7 @@ function buildStage(){
   sk.near = 150; sk.far = 4500;
   sunLight.shadow.bias = -0.0003;
   inquadraOmbre(430);
-  applicaQualita(liv0);
+  applicaQualita(liv0); applicaRisoluzione(true);
   addEventListener('resize', () => {
     const W = Math.max(320, innerWidth || 1280), H = Math.max(240, innerHeight || 720);
     camera.aspect = W / H; camera.updateProjectionMatrix();
@@ -1726,7 +1726,10 @@ const FOG_VOLO = [3800, 6500, 9500, 11500];   // nebbia in volo per livello: con
 const QUAL = { liv: 2, tetto: 3, tettoMax: 3, mob: false, t: 0, n: 0, ok: 0, giu: 0, avvio: 0, res: 1, salva: 0 };
 const VEG_IM = [];                      // { im, n }: mesh istanziate della vegetazione
 // Mappa delle ombre per livello (lato in px): 0 = niente ombre vere (solo quelle di contatto).
-const OMBRA_PX = [0, 1024, 2048, 4096];
+// Livello 0: la mappa resta (256 px) ma la camera delle ombre si chiude a un metro: nessun oggetto dentro,
+// nessuna ombra e quasi nessun costo, SENZA spegnere castShadow (spegnerlo ricompila tutti gli shader:
+// un blocco di 1-2 s con schermo nero a ogni cambio di livello).
+const OMBRA_PX = [256, 1024, 2048, 4096];
 const QKEY = 'srmx_q2';                 // livello raggiunto nelle sessioni precedenti (per dispositivo)
 function qualIniziale(){
   const mob = /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
@@ -1751,6 +1754,7 @@ function salvaQualita(){
 // vicina a Lino (il nitido serve li') e lo si allarga quando ci si allontana (servono le case lontane).
 let ombraHalf = 0;
 function inquadraOmbre(half){
+  if (QUAL.liv === 0) half = 0.5;
   if (!sunLight || Math.abs(half - ombraHalf) < 1) return;
   ombraHalf = half;
   const sk = sunLight.shadow.camera;
@@ -1766,14 +1770,12 @@ function applicaQualita(l){
   applicaRisoluzione();
   if (sunLight) {
     const px = OMBRA_PX[l];
-    if (px > 0) {
-      if (sunLight.shadow.mapSize.x !== px) {
-        sunLight.shadow.mapSize.set(px, px);
-        if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }   // si ricrea alla prossima resa
-        ombraHalf = 0; inquadraOmbre(ombraHalf || 430);
-      }
-      sunLight.castShadow = true;
-    } else sunLight.castShadow = false;    // spegnere la luce-ombra ricompila da solo i programmi
+    if (sunLight.shadow.mapSize.x !== px) {
+      sunLight.shadow.mapSize.set(px, px);
+      if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }   // si ricrea alla prossima resa
+    }
+    sunLight.castShadow = true;
+    ombraHalf = -1; inquadraOmbre(430);
   }
   const fr = [0.55, 0.8, 1, 1][l];
   for (const v of VEG_IM) v.im.count = Math.max(1, Math.round(v.n * fr));
@@ -1783,11 +1785,17 @@ function applicaQualita(l){
 }
 // risoluzione di resa = pixel ratio del livello x fattore dinamico QUAL.res (0,6-1): e' la prima
 // leva che si muove, a piccoli passi, e non si nota
-function applicaRisoluzione(){
+// Il cambio di pixel ratio ridimensiona il buffer del canvas, che resta NERO finche' non si disegna il
+// frame successivo: fatto in fondo al tick (dopo la resa) produceva un lampo nero a ogni passo della
+// risoluzione dinamica. Ora si prenota e si applica all'inizio del tick, subito prima di disegnare.
+function applicaRisoluzione(subito){
   if (!renderer) return;
+  if (!subito) { QUAL.resPend = true; return; }
+  QUAL.resPend = false;
   const dpr = devicePixelRatio || 1;
   const base = [1, Math.min(dpr, 1.5), Math.min(dpr, 2), Math.min(dpr, 2)][QUAL.liv];
-  renderer.setPixelRatio(Math.max(0.5, base * QUAL.res));
+  const pr = Math.max(0.5, base * QUAL.res);
+  if (Math.abs(renderer.getPixelRatio() - pr) > 1e-3) renderer.setPixelRatio(pr);
 }
 // guardia prestazioni: finestre di 1 s sul dt reale (non su quello limitato del gioco).
 //  - sotto i 40 fps si abbassa prima la risoluzione (a passi del 5%, fino al 60%);
@@ -1802,15 +1810,20 @@ function guardiaFps(dtReale){
   if (QUAL.lock || performance.now() < QUAL.avvio + 10000) return;
   if (typeof extLoading !== 'undefined' && extLoading) return;
   if (document.hidden) return;
+  // due finestre di fila sotto i 40 fps prima di scendere, quattro sopra i 55 prima di risalire:
+  // la risoluzione non deve oscillare (ogni cambio costa un ridimensionamento del buffer)
   if (fps < 40) {
-    QUAL.ok = 0;
-    if (QUAL.res > 0.6) { QUAL.res = Math.max(0.6, QUAL.res - 0.05); applicaRisoluzione(); QUAL.giu = 0; }
-    else if (fps < 27 && QUAL.liv > 0 && ++QUAL.giu >= 2) { QUAL.giu = 0; QUAL.res = 0.85; applicaQualita(QUAL.liv - 1); salvaQualita(); }
+    QUAL.ok = 0; QUAL.lenti = (QUAL.lenti || 0) + 1;
+    if (QUAL.lenti >= 2) {
+      QUAL.lenti = 0;
+      if (QUAL.res > 0.6) { QUAL.res = Math.max(0.6, QUAL.res - 0.08); applicaRisoluzione(); QUAL.giu = 0; }
+      else if (fps < 27 && QUAL.liv > 0 && ++QUAL.giu >= 2) { QUAL.giu = 0; QUAL.res = 0.85; applicaQualita(QUAL.liv - 1); salvaQualita(); }
+    }
   } else if (fps > 55) {
-    QUAL.giu = 0;
-    if (QUAL.res < 1) { QUAL.res = Math.min(1, QUAL.res + 0.03); applicaRisoluzione(); QUAL.ok = 0; }
+    QUAL.giu = 0; QUAL.lenti = 0;
+    if (QUAL.res < 1) { if (++QUAL.ok >= 4) { QUAL.ok = 0; QUAL.res = Math.min(1, QUAL.res + 0.08); applicaRisoluzione(); } }
     else if (QUAL.liv < QUAL.tetto && ++QUAL.ok >= 8) { QUAL.ok = 0; applicaQualita(QUAL.liv + 1); salvaQualita(); }
-  } else { QUAL.giu = 0; QUAL.ok = 0; }
+  } else { QUAL.giu = 0; QUAL.ok = 0; QUAL.lenti = 0; }
   if (++QUAL.salva % 30 === 0) salvaQualita();
 }
 const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
@@ -4571,7 +4584,7 @@ function tickOmbraContatto(p, yaw){
   if (!o.visible) return;
   o.position.set(p.x, p.y + 0.08, p.z); o.rotation.y = yaw;
   // con le ombre vere il disco resta tenue (occlusione di contatto); senza, e' l'unica ombra
-  o.material.opacity = sunLight && sunLight.castShadow ? 0.45 : 0.9;
+  o.material.opacity = QUAL.liv > 0 ? 0.45 : 0.9;
 }
 function buildOmbraCervo(){
   if (OMBRA_C) return OMBRA_C;
@@ -4932,6 +4945,7 @@ function tiltOff(){
 function tick(){
   const dtReale = clock.getDelta();
   const dt = Math.min(dtReale, 0.05);
+  if (QUAL.resPend) applicaRisoluzione(true);   // ridimensiona il buffer e lo ridisegna nello stesso giro
   if (SKY) SKY.position.copy(camera.position);
   if (NUVOLE.length) tickNuvole(dt);
   if (VENTO_SH.length) { const tt = performance.now() / 1000; for (const sh of VENTO_SH) sh.uniforms.uT.value = tt; }
