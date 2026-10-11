@@ -2981,8 +2981,9 @@ function schedaCoturnice(sS){
     '<p>La pernice delle montagne appenniniche: grossa come un piccione tozzo, dorso grigio-bruno, gola bianca bordata di nero e fianchi barrati di nero, bianco e castano; becco e zampe rosso corallo. Si alza in volo solo all’ultimo, con un frullo rumoroso, e preferisce scendere il pendio di corsa fra i sassi.</p>' +
     '<table><tr><th>Dove</th><td>Versanti aperti, assolati e sassosi fra i 1.000 e i 2.500 m, con erba rada e rocce affioranti: pascoli sopra Passo Le Forche, valloni laterali del Velino, creste del Cafornia. In inverno scende di quota sui pendii spazzati dal vento.</td></tr>' +
     '<tr><th>Abitudini</th><td>Vive in piccoli gruppi familiari (brigate) di 5–15 individui; nidifica a terra fra maggio e giugno. Il richiamo, un «ciò-ciò-ciò-ciock» ripetuto, si sente soprattutto all’alba.</td></tr>' +
-    '<tr><th>Perché conta</th><td>Specie di interesse comunitario, in calo in tutto l’Appennino per l’abbandono dei pascoli e il disturbo: nella Riserva è fra le specie che si cerca di tutelare. In gara non si esce dal tracciato e si tengono i cani al guinzaglio.</td></tr></table>' +
-    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026; Riserva Naturale Monte Velino.</p>');
+    '<tr><th>Quante sono</th><td>I monitoraggi della Riserva (2019 e 2021, 67 punti di campionamento) contano <b>50–70 animali</b>, concentrati soprattutto nelle due grandi valli glaciali: Val di Teve e Valle Majelama. Questo gruppetto sopra Passo Le Forche è ai margini del loro areale.</td></tr>' +
+    '<tr><th>Perché conta</th><td>Specie di interesse comunitario, valutata <b>in decremento</b> (soprattutto l’area riproduttiva si restringe) per l’abbandono dei pascoli e il disturbo: nella Riserva è fra le specie che si cerca di tutelare. In gara non si esce dal tracciato e si tengono i cani al guinzaglio.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (monitoraggio <i>Alectoris graeca</i>); Guida naturalistica SRM 2026.</p>');
 }
 function schedaAdonide(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
@@ -2990,8 +2991,10 @@ function schedaAdonide(sS){
     '<p>Un piccolo cuscinetto di foglie finemente divise, alto una spanna, che a inizio estate si copre di fiori gialli larghi come una moneta. Non esiste in nessun altro luogo al mondo se non sulle montagne dell’Appennino centrale: è un <b>endemismo</b>, e il Velino ne ospita una delle popolazioni più importanti.</p>' +
     '<table><tr><th>Dove</th><td>Ghiaioni e pietraie calcaree sopra i 1.800 m, spesso in pieno sentiero: qui poco prima della Capanna di Sevice (una cinquantina di piante a bordo pista) e sulla cresta fra Velino e Cafornia (circa duecento).</td></tr>' +
     '<tr><th>Fioritura</th><td>Giugno–luglio, subito dopo lo scioglimento della neve; in ottobre resta il cuscinetto verde-grigio fra i sassi.</td></tr>' +
+    '<tr><th>Quante sono</th><td>Nella Riserva il Piano di gestione censisce <b>16 popolamenti, 4.658 piante</b> su poco meno di sei ettari, in stato di conservazione favorevole. Vive solo fra 1.900 e 2.600 m su Velino, Sirente, Gran Sasso, Majella e Sibillini.</td></tr>' +
+    '<tr><th>Storia</th><td>Fu scoperta proprio qui: il botanico <b>Michele Tenore</b>, con Mauri e Orsini, la descrisse al mondo scientifico dopo la prima esplorazione botanica del Velino, il 10 luglio 1829, sedici ore fra salita e discesa da Massa d’Albe. Dal 2023 il «Sentiero Michele Tenore dell’Adonis distorta» (Corona – Fonte Canale – Costa Cafornia – Velino) ricalca quell’itinerario: la discesa della gara ne percorre un tratto.</td></tr>' +
     '<tr><th>Perché conta</th><td>Specie protetta di interesse europeo: cresce lentissima e un calpestio ripetuto la cancella. In gara si resta sul tracciato segnato proprio per non uscire sui ghiaioni dove vive.</td></tr></table>' +
-    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026.</p>');
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino; Guida naturalistica SRM 2026.</p>');
 }
 function schedaGenziana(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
