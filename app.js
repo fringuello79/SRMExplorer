@@ -408,7 +408,7 @@ function buildStage(){
   scene = new THREE.Scene();
   const cielo = new THREE.Color(0xcfe2f4);
   scene.background = cielo;
-  scene.fog = new THREE.Fog(cielo, 2800, 18000);
+  scene.fog = new THREE.Fog(cielo, 2400, 18000);   // prospettiva aerea un filo piu' presente
   camera = new THREE.PerspectiveCamera(55, Math.max(320, innerWidth || 1280) / Math.max(240, innerHeight || 720), 1, 30000);
   camera.position.set(route.x[6], route.z[6] + 60, -route.y[6] + 120);
   controls = new OrbitControls(camera, renderer.domElement);
@@ -1008,7 +1008,9 @@ function tickNuvole(dt){
     n.position.x += n.userData.v * 0.62 * dt; n.position.z += n.userData.v * 0.78 * dt;
     const ex = (n.position.x - FC.BC[0]) / FC.BR[0], ez = (n.position.z - FC.BC[1]) / FC.BR[1];
     if (ex * ex + ez * ez > 0.95) { n.position.x -= ex * FC.BR[0] * 1.9; n.position.z -= ez * FC.BR[1] * 1.9; }
-    NUBI_U[i].set(n.position.x, n.position.z, n.userData.w * 0.55);
+    // l'ombra sta dove il sole la proietta: spostata controsole di (quota nuvola - quota suolo) / tan(elevazione)
+    { const hy = Math.max(0, n.position.y - groundAt(n.position.x, n.position.z));
+      NUBI_U[i].set(n.position.x - SUNDIR.x / SUNDIR.y * hy, n.position.z - SUNDIR.z / SUNDIR.y * hy, n.userData.w * 0.55); }
     // dentro o troppo vicino a una nuvola: si dissolve (niente lastre tagliate dal piano vicino)
     const dc = n.position.distanceTo(camera.position);
     const op = 0.92 * clamp((dc - n.userData.w * 0.7) / (n.userData.w * 0.8), 0, 1);
@@ -1591,6 +1593,14 @@ function compilaTerreno(sh, tinta){
     // tinta lenta: scalda o raffredda a chiazze larghe (fonde i confini fra prato, bosco e coltivo)
     float t1 = texture2D(uDet, vDetXZ / 420.0).r;
     diffuseColor.rgb *= mix(vec3(0.95, 0.97, 1.04), vec3(1.05, 1.02, 0.94), t1) * basso + vec3(1.0 - basso);
+  }
+  // stagione: il 18 ottobre le praterie di quota sono brune e paglierine, non verdi d'estate come
+  // nell'ortofoto. Sopra i ~1.750 m reali (y scena 1144) il verde vira a paglia; fra 1.300 e 1.750 a meta'.
+  {
+    float verdeP = smoothstep(0.0, 0.10, diffuseColor.g - max(diffuseColor.r, diffuseColor.b));
+    float quota = 0.30 * smoothstep(640.0, 860.0, vWy) + 0.30 * smoothstep(1050.0, 1300.0, vWy);
+    vec3 paglia = diffuseColor.rgb * vec3(1.16, 1.03, 0.68) + vec3(0.05, 0.03, 0.0);
+    diffuseColor.rgb = mix(diffuseColor.rgb, paglia, quota * (0.35 + 0.65 * verdeP) * (1.0 - ripida));
   }
   // dettaglio ravvicinato (sotto i ~350 m dalla camera): grana fine dell'erba e ciuffi,
   // sfuma con la distanza cosi' da lontano la texture resta quella di prima
