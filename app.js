@@ -2791,16 +2791,22 @@ function texSilene(seme){
   const c = cv.getContext('2d');
   c.fillStyle = '#2c4a22'; c.fillRect(0, 0, S, S);
   for (let i = 0; i < 2600; i++) { c.fillStyle = 'hsl(' + (96 + rnd() * 20) + ',' + (30 + rnd() * 25) + '%,' + (16 + rnd() * 16) + '%)'; const r = 1 + rnd() * 3; c.beginPath(); c.arc(rnd() * S, rnd() * S, r, 0, 6.3); c.fill(); }
-  for (let i = 0; i < 520; i++) {
+  for (let i = 0; i < 1500; i++) {
     const v = Math.pow(rnd(), 0.55), y = (1 - v) * S;                 // v alto = sommita' della cupola
     if (rnd() > 0.25 + v * 0.75) continue;
-    const x = rnd() * S, r = 3.2 + rnd() * 2.6;
+    const x = rnd() * S, r = 1.7 + rnd() * 1.3;                       // fiori piccoli e fitti
     c.fillStyle = 'hsl(' + (312 + rnd() * 16) + ',' + (62 + rnd() * 18) + '%,' + (58 + rnd() * 14) + '%)';
     for (let k = 0; k < 5; k++) { const aa = k / 5 * 6.283; c.beginPath(); c.arc(x + Math.cos(aa) * r * 0.55, y + Math.sin(aa) * r * 0.55, r * 0.5, 0, 6.3); c.fill(); }
     c.fillStyle = '#f7e9a8'; c.beginPath(); c.arc(x, y, r * 0.22, 0, 6.3); c.fill();
   }
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 4;
   return t;
+}
+function geoRoccia(seme){
+  // blocco di calcare: ellissoide schiacciato e sfaccettato, grigio chiaro con facce piu' scure in basso
+  const rnd = rngDa(seme);
+  const g = new THREE.IcosahedronGeometry(1, 2);   // sfera unitaria: le dimensioni le da' l'istanza (rx, ry, rz)
+  return sfaccetta(g, rnd, 0.08, (c, y, ny, r) => c.setHSL(0.10 + (r() - 0.5) * 0.03, 0.05 + r() * 0.05, 0.17 + 0.09 * ny + (r() - 0.5) * 0.06));
 }
 function buildPiantaLowPoly(cfg){
   const K = (route.lino_h || 7.8) / 1.7;
@@ -2817,7 +2823,7 @@ function buildPiantaLowPoly(cfg){
   transformed.x += sw * h * h * ${vento.toFixed(2)}; transformed.z += sw * h * h * ${(vento * 0.6).toFixed(2)}; }`);
   };
   m.customProgramCacheKey = () => 'lowpoly-' + cfg.nome;
-  const rnd = rngDa(cfg.seme), posti = [];
+  const rnd = rngDa(cfg.seme), posti = [], rocce = [];
   for (const z of cfg.zone) for (let k = 0; k < z.n; k++) {
     const sS = z.a + rnd() * (z.b - z.a);
     const lato = rnd() < 0.5 ? -1 : 1, dist = z.d0 + rnd() * (z.d1 - z.d0);
@@ -2825,11 +2831,33 @@ function buildPiantaLowPoly(cfg){
     const cx = tmpA.x - tmpB.z * dist * K * lato, cz = tmpA.z + tmpB.x * dist * K * lato;
     // colonie: attorno al punto, da grp[0] a grp[1] piante entro cfg.rGrp metri
     const nG = z.grp ? z.grp[0] + Math.floor(rnd() * (z.grp[1] - z.grp[0] + 1)) : 1;
+    let roccia = null;
+    if (cfg.roccia) {
+      // un blocco di roccia per colonia, affondato per meta', inclinato con il pendio: i cuscini ci crescono sopra
+      let cy = terraVera(cx, cz, tmpA.y + 8); if (cy < -1e3) cy = groundAt(cx, cz);
+      const rx = ((cfg.rGrp || 1.5) * (nG > 1 ? 1.25 : 0.7) + rnd() * 0.5) * K, rz = rx * (0.7 + rnd() * 0.4), ry = rx * (0.30 + rnd() * 0.14);
+      const h = 1.5, gx = (terraVera(cx + h, cz, cy + 6) - terraVera(cx - h, cz, cy + 6)) / (2 * h), gz = (terraVera(cx, cz + h, cy + 6) - terraVera(cx, cz - h, cy + 6)) / (2 * h);
+      const q = new THREE.Quaternion(), rotY = rnd() * Math.PI * 2;
+      if (Math.abs(gx) < 3 && Math.abs(gz) < 3) q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(-gx, 1, -gz).normalize());
+      q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0)));
+      roccia = { x: cx, y: cy - ry * 0.22, z: cz, rx, ry, rz, q };
+      rocce.push(roccia);
+    }
     for (let j = 0; j < nG; j++) {
-      const ang = rnd() * Math.PI * 2, rr = nG > 1 ? Math.sqrt(rnd()) * (cfg.rGrp || 1.5) * K : 0;
-      const x = cx + Math.cos(ang) * rr, z2 = cz + Math.sin(ang) * rr;
-      let y = terraVera(x, z2, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z2);
-      posti.push([x, y + (cfg.affonda || 0), z2, rnd() * Math.PI * 2, (cfg.sc0 || 0.85) + rnd() * (cfg.sc1 || 0.3), sS]);
+      const ang = rnd() * Math.PI * 2;
+      if (roccia) {
+        // posizione sulla superficie superiore dell'ellissoide della roccia (coordinate locali, poi ruotate)
+        const u = Math.sqrt(rnd()) * 0.72, lx = Math.cos(ang) * u * roccia.rx, lz = Math.sin(ang) * u * roccia.rz;
+        const ly = roccia.ry * Math.sqrt(Math.max(0, 1 - (lx / roccia.rx) ** 2 - (lz / roccia.rz) ** 2)) * 0.92;
+        const loc = new THREE.Vector3(lx, ly, lz).applyQuaternion(roccia.q);
+        const n = new THREE.Vector3(lx / roccia.rx ** 2, ly / roccia.ry ** 2, lz / roccia.rz ** 2).normalize().applyQuaternion(roccia.q);
+        posti.push([roccia.x + loc.x, roccia.y + loc.y + (cfg.affonda || 0), roccia.z + loc.z, rnd() * Math.PI * 2, (cfg.sc0 || 0.85) + rnd() * (cfg.sc1 || 0.3), sS, n]);
+      } else {
+        const rr = nG > 1 ? Math.sqrt(rnd()) * (cfg.rGrp || 1.5) * K : 0;
+        const x = cx + Math.cos(ang) * rr, z2 = cz + Math.sin(ang) * rr;
+        let y = terraVera(x, z2, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z2);
+        posti.push([x, y + (cfg.affonda || 0), z2, rnd() * Math.PI * 2, (cfg.sc0 || 0.85) + rnd() * (cfg.sc1 || 0.3), sS]);
+      }
     }
   }
   const im = new THREE.InstancedMesh(geo, m, posti.length);
@@ -2837,7 +2865,8 @@ function buildPiantaLowPoly(cfg){
   const up = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3(), Qt = new THREE.Quaternion(), col = new THREE.Color();
   posti.forEach((p, i) => {
     P.set(p[0], p[1], p[2]); Q.setFromEuler(E.set(0, p[3], 0)); S.setScalar(p[4] * K);
-    if (cfg.pendenza) {
+    if (p[6]) { Qt.setFromUnitVectors(up, p[6]); Q.premultiply(Qt); }   // normale della roccia
+    else if (cfg.pendenza) {
       const h = 1.2, gx = (terraVera(p[0] + h, p[2], p[1] + 6) - terraVera(p[0] - h, p[2], p[1] + 6)) / (2 * h), gz = (terraVera(p[0], p[2] + h, p[1] + 6) - terraVera(p[0], p[2] - h, p[1] + 6)) / (2 * h);
       if (Math.abs(gx) < 3 && Math.abs(gz) < 3) { nrm.set(-gx, 1, -gz).normalize(); Qt.setFromUnitVectors(up, nrm); Q.premultiply(Qt); }
     }
@@ -2848,6 +2877,12 @@ function buildPiantaLowPoly(cfg){
   im.castShadow = cfg.ombra !== false; im.receiveShadow = true; im.frustumCulled = false; im.name = cfg.nome;
   im.userData.posti = posti; im.userData.scheda = cfg.scheda;
   scene.add(im); IMPOSTORS.push(im);
+  if (rocce.length) {
+    const rm = new THREE.InstancedMesh(geoRoccia(cfg.seme + 7), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, flatShading: true }), rocce.length);
+    rocce.forEach((r, i) => { P.set(r.x, r.y, r.z); S.set(r.rx, r.ry, r.rz); M.compose(P, r.q, S); rm.setMatrixAt(i, M); });
+    rm.instanceMatrix.needsUpdate = true; rm.castShadow = true; rm.receiveShadow = true; rm.frustumCulled = false; rm.name = cfg.nome + '_rocce';
+    scene.add(rm); im.userData.rocce = rm;
+  }
   return im;
 }
 function buildGenziane(){
@@ -2864,7 +2899,7 @@ function buildGenziane(){
     zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
   // Silene acaulis: cuscinetti nei pavimenti calcarei della cresta Sevice-Cafornia (km 15-18,6).
   // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
-  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, ombra: false, sc0: 0.55, sc1: 0.6, affonda: -0.09, rGrp: 1.6,
+  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, roccia: true, ombra: false, sc0: 0.5, sc1: 0.55, affonda: -0.03, rGrp: 1.1,
     zone: [{ a: 15100, b: 16400, n: 18, d0: 1.0, d1: 4.5, grp: [2, 5] }, { a: 16400, b: 18600, n: 26, d0: 1.0, d1: 5, grp: [2, 5] }], scheda: schedaSilene });
   else buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
     zone: [{ a: 15100, b: 16400, n: 18, d0: 1.2, d1: 4.5 }, { a: 16400, b: 18600, n: 24, d0: 1.2, d1: 5 }], scheda: schedaSilene });
