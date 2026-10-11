@@ -1436,9 +1436,32 @@ function detailTex(){
     return cur;
   };
   const A = mk(2), B = mk(5);
+  // canale blu: puntinato fine (fili d'erba, brecciolino): rumore crudo con una leggera direzionalita'
+  const C = new Float32Array(n2);
+  for (let i = 0; i < n2; i++) C[i] = rnd();
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {    // sfuma di un passo lungo y: fili verticali
+    const i = y * S + x; C[i] = 0.5 * C[i] + 0.5 * C[((y + 1) % S) * S + x];
+  }
+  // canale alfa: celle (sassi del brecciaio): distanza al piu' vicino di 700 centri, periodica
+  const NC = 700, cx = new Float32Array(NC), cy = new Float32Array(NC);
+  for (let k = 0; k < NC; k++) { cx[k] = rnd() * S; cy[k] = rnd() * S; }
+  const grid = new Array(16 * 16).fill(null).map(() => []);
+  for (let k = 0; k < NC; k++) grid[(Math.floor(cy[k] / 16) % 16) * 16 + (Math.floor(cx[k] / 16) % 16)].push(k);
+  const D = new Float32Array(n2);
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    let d1 = 1e9, d2 = 1e9;
+    const gx = Math.floor(x / 16), gy = Math.floor(y / 16);
+    for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+      for (const k of grid[((gy + oy + 16) % 16) * 16 + (gx + ox + 16) % 16]) {
+        let dx = Math.abs(cx[k] - x), dy = Math.abs(cy[k] - y); if (dx > S / 2) dx = S - dx; if (dy > S / 2) dy = S - dy;
+        const d = dx * dx + dy * dy; if (d < d1) { d2 = d1; d1 = d; } else if (d < d2) d2 = d;
+      }
+    }
+    D[y * S + x] = Math.min(1, Math.sqrt(d2) - Math.sqrt(d1)) ;   // bordo delle celle: 0 sul confine, 1 all'interno
+  }
   const data = new Uint8Array(n2 * 4);
   for (let i = 0; i < n2; i++) {
-    data[i * 4] = A[i] * 255; data[i * 4 + 1] = B[i] * 255; data[i * 4 + 2] = 128; data[i * 4 + 3] = 255;
+    data[i * 4] = A[i] * 255; data[i * 4 + 1] = B[i] * 255; data[i * 4 + 2] = C[i] * 255; data[i * 4 + 3] = Math.min(1, D[i] / 2.5) * 255;
   }
   DETTEX = new THREE.DataTexture(data, S, S);
   DETTEX.wrapS = DETTEX.wrapT = THREE.RepeatWrapping;
@@ -1583,9 +1606,16 @@ function compilaTerreno(sh, tinta){
       float ciuffo = smoothstep(0.55, 0.75, g3) * erba;
       vec3 tintaCiuffo = vec3(1.04, 1.02, 0.90);
       float grana = mix(0.90, 1.10, g1) * mix(0.95, 1.05, g2);
+      // fili d'erba: puntinato fine (canale blu) che da' la scala da vicino, piu' forte entro ~40 m
+      float vicinissimo = 1.0 - smoothstep(60.0, 200.0, dist);
+      float fili = texture2D(uDet, vDetXZ / 1.15).b;
+      grana *= mix(1.0, mix(0.86, 1.14, fili), 0.35 + 0.45 * vicinissimo);
       vec3 det = diffuseColor.rgb * grana * mix(vec3(1.0), tintaCiuffo, ciuffo * 0.45);
-      // sulla roccia: grana piu' dura e contrastata
-      det = mix(det, diffuseColor.rgb * mix(0.80, 1.22, g1) * mix(0.9, 1.1, g2), ripida);
+      // sulla roccia e sul brecciaio: sassi a celle (canale alfa) con il bordo scuro, grana dura
+      float cella = texture2D(uDet, vDetXZ / 3.4).a;
+      float sasso = mix(0.72, 1.12, texture2D(uDet, vDetXZ / 3.4 + 0.37).r) * mix(0.75, 1.0, smoothstep(0.0, 0.35, cella));
+      float brecciaio = max(ripida, smoothstep(1380.0, 1620.0, vWy) * smoothstep(0.98, 0.90, abs(vNy)) * 0.7);
+      det = mix(det, diffuseColor.rgb * sasso * mix(0.9, 1.1, g2), brecciaio * (0.5 + 0.5 * vicinissimo));
       diffuseColor.rgb = mix(diffuseColor.rgb, det, vicino);
     }
   }
@@ -2948,10 +2978,10 @@ function texSilene(seme){
 }
 // fattore radiale della forma del masso in un punto della sfera unitaria (usato anche per posare i cuscini)
 function bozzaRoccia(x, y, z){ return 1 + 0.10 * (Math.sin(x * 2.3 + z * 1.7) * Math.cos(y * 2.9 - x * 1.1)) + 0.06 * Math.sin(x * 5.1 + y * 4.3 + z * 3.7); }
-function geoRoccia(seme){
+function geoRoccia(seme, det){
   // blocco di calcare: ellissoide schiacciato e sfaccettato, grigio chiaro con facce piu' scure in basso
   const rnd = rngDa(seme);
-  const g = new THREE.IcosahedronGeometry(1, 3);   // sfera unitaria: le dimensioni le da' l'istanza (rx, ry, rz)
+  const g = new THREE.IcosahedronGeometry(1, det || 3);   // sfera unitaria: le dimensioni le da' l'istanza (rx, ry, rz)
   // bozze larghe e coerenti (rumore sulla posizione) piu' una grana fine: forma da masso, non da palla
   const p = g.getAttribute('position');
   for (let i = 0; i < p.count; i++) {
@@ -3058,6 +3088,7 @@ function buildGenziane(){
     zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
   // Silene acaulis: cuscinetti nei pavimenti calcarei della cresta Sevice-Cafornia (km 15-18,6).
   // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
+  try { buildSassiCresta(); } catch (e) { console.warn('sassi cresta:', e); }
   if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, roccia: true, ombra: false, sc0: 0.5, sc1: 0.55, affonda: -0.03, rGrp: 1.1,
     zone: [{ a: 15100, b: 16400, n: 16, d0: 1.0, d1: 4.5, grp: [2, 5] }, { a: 16400, b: 18600, n: 24, d0: 1.0, d1: 5, grp: [2, 5] }, { a: 18600, b: 20200, n: 12, d0: 1.0, d1: 5, grp: [2, 4] }], scheda: schedaSilene });
   else buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
@@ -3074,6 +3105,40 @@ function schedaPioppo(sS){
     '<tr><th>Come vive</th><td>Specie pioniera e di luce, cresce in fretta e si propaga per polloni dalle radici: un gruppo di pioppi vicini è spesso un unico individuo.</td></tr>' +
     '<tr><th>Per chi corre</th><td>Dove ci sono i pioppi il fondo resta umido anche con il sole: attenzione a radici e foglie bagnate.</td></tr></table>' +
     '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità PT, <i>Corylo-Populetum tremuli</i>); Guida naturalistica SRM 2026.</p>');
+}
+// sassi del brecciaio e della roccia spaccata dal gelo lungo la cresta (km 10,5-21, sopra i 1.800 m):
+// blocchi low-poly (80 facce) posati con la pendenza, piu' fitti dove il pendio e' ripido e sui
+// pavimenti calcarei del tratto Sevice-Cafornia. Una InstancedMesh, ombre, non cliccabili.
+function buildSassiCresta(){
+  const K = (route.lino_h || 7.8) / 1.7, rnd = rngDa(777), posti = [];
+  const A = route.elev_a, B = route.elev_b;
+  for (let s = 10500; s < 21200; s += 9) {
+    posAt(s, tmpA); tanAt(s, tmpB);
+    const e = A * tmpA.y + B; if (e < 1800) continue;
+    const pav = s > 15000 && s < 18700 ? 1.6 : 1.0;               // pavimenti calcarei: piu' sassi
+    const lato = rnd() < 0.5 ? -1 : 1, dist = (2.5 + rnd() * 38) * K;
+    const x = tmpA.x - tmpB.z * dist * lato, z = tmpA.z + tmpB.x * dist * lato;
+    let y = terraVera(x, z, tmpA.y + 10); if (y < -1e3) continue;
+    const h = 2, gx = (terraVera(x + h, z, y + 6) - terraVera(x - h, z, y + 6)) / (2 * h), gz = (terraVera(x, z + h, y + 6) - terraVera(x, z - h, y + 6)) / (2 * h);
+    if (Math.abs(gx) > 3 || Math.abs(gz) > 3) continue;
+    const pend = Math.hypot(gx, gz);
+    if (rnd() > (0.18 + 0.9 * Math.min(pend, 0.7)) * pav) continue;
+    const r = (0.18 + rnd() * rnd() * 0.75) * K;                    // 18 cm - ~95 cm, piu' piccoli che grandi
+    posti.push([x, y - r * 0.35, z, rnd() * Math.PI * 2, r, gx, gz, 0.6 + rnd() * 0.5, 0.7 + rnd() * 0.5]);
+  }
+  if (!posti.length) return;
+  const im = new THREE.InstancedMesh(geoRoccia(778, 2), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 , flatShading: true }), posti.length);
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(), S = new THREE.Vector3(), P = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), nrm = new THREE.Vector3(), Qt = new THREE.Quaternion(), col = new THREE.Color();
+  posti.forEach((p, i) => {
+    P.set(p[0], p[1], p[2]); Q.setFromEuler(E.set(0, p[3], 0)); S.set(p[4], p[4] * p[7], p[4] * p[8]);
+    nrm.set(-p[5], 1, -p[6]).normalize(); Qt.setFromUnitVectors(up, nrm); Q.premultiply(Qt);
+    M.compose(P, Q, S); im.setMatrixAt(i, M);
+    col.setHSL(0.09, 0.04, 0.80 + rnd() * 0.35); im.setColorAt(i, col);
+  });
+  im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
+  im.castShadow = true; im.receiveShadow = true; im.frustumCulled = false; im.name = 'SassiCresta';
+  scene.add(im); VEG_IM.push({ im, n: posti.length });
+  console.log('sassi di cresta:', posti.length);
 }
 function schedaRoverella(){
   openCard('<h2>Roverella</h2><h3><i>Quercus pubescens</i> · querceto termofilo</h3>' +
