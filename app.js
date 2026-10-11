@@ -2847,12 +2847,12 @@ function buildPiantaLowPoly(cfg){
     if (cfg.roccia) {
       // un blocco di roccia per colonia, affondato per meta', inclinato con il pendio: i cuscini ci crescono sopra
       let cy = terraVera(cx, cz, tmpA.y + 8); if (cy < -1e3) cy = groundAt(cx, cz);
-      const rx = ((cfg.rGrp || 1.5) * (nG > 1 ? 1.25 : 0.7) + rnd() * 0.5) * K, rz = rx * (0.7 + rnd() * 0.4), ry = rx * (0.30 + rnd() * 0.14);
+      const rx = ((cfg.rGrp || 1.5) * (nG > 1 ? 1.25 : 0.7) + rnd() * 0.5) * K, rz = rx * (0.7 + rnd() * 0.4), ry = rx * (0.22 + rnd() * 0.12);
       const h = 1.5, gx = (terraVera(cx + h, cz, cy + 6) - terraVera(cx - h, cz, cy + 6)) / (2 * h), gz = (terraVera(cx, cz + h, cy + 6) - terraVera(cx, cz - h, cy + 6)) / (2 * h);
       const q = new THREE.Quaternion(), rotY = rnd() * Math.PI * 2;
       if (Math.abs(gx) < 3 && Math.abs(gz) < 3) q.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(-gx, 1, -gz).normalize());
       q.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, rotY, 0)));
-      roccia = { x: cx, y: cy - ry * 0.22, z: cz, rx, ry, rz, q };
+      roccia = { x: cx, y: cy - ry * 0.35, z: cz, rx, ry, rz, q };
       rocce.push(roccia);
     }
     for (let j = 0; j < nG; j++) {
@@ -2905,34 +2905,42 @@ function buildGenziane(){
   // Pioppo tremulo in veste d'autunno (giallo): boscaglie umide nelle conche fresche. Il tracciato
   // scende in una conca a ~930 m fra il km 6,3 e il km 7 (la quota piu' bassa della salita) e ne
   // tocca un'altra in discesa verso i 1.100 m (km 24,6-25): tre alberi qui, due la'.
-  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Pioppi', geo: geoPioppo(64), seme: 6401, vento: 1.4, hVento: 11, sc0: 0.9, sc1: 0.35,
-    zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
+  // Piano di gestione RNO M. Velino (unita' PT, Corylo-Populetum tremuli facies a Populus tremula): boschetti
+  // frammentari fra 1.200 e 1.700 m, 6-10 m di altezza; 9 frammenti alla giunzione fra Valle Majelama e Valle
+  // della Genzana (1.400-1.600 m) = la grande discesa km 22,2-23,3; 4 frammenti nei valloni del versante SW
+  // del Velino sotto la scarpata di faglia (1.200-1.300 m) = salita verso Passo Le Forche km 9,7-10,4.
+  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Pioppi', geo: geoPioppo(64), seme: 6401, vento: 1.4, hVento: 11, sc0: 0.6, sc1: 0.3,
+    zone: [{ a: 22200, b: 23300, n: 4, d0: 8, d1: 22, grp: [2, 3] }, { a: 9700, b: 10400, n: 2, d0: 10, d1: 24, grp: [1, 2] }], rGrp: 4, scheda: schedaPioppo });
   else buildImpostor({ nome: 'Pioppi', file: 'pioppo.webp', layout: 'colonne', hReale: 12, aspetto: 0.67, seme: 6401, vento: 0.25, sc0: 0.85, sc1: 0.35, luce: 0.45,
     zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
   // Silene acaulis: cuscinetti nei pavimenti calcarei della cresta Sevice-Cafornia (km 15-18,6).
   // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
   if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, roccia: true, ombra: false, sc0: 0.5, sc1: 0.55, affonda: -0.03, rGrp: 1.1,
-    zone: [{ a: 15100, b: 16400, n: 18, d0: 1.0, d1: 4.5, grp: [2, 5] }, { a: 16400, b: 18600, n: 26, d0: 1.0, d1: 5, grp: [2, 5] }], scheda: schedaSilene });
+    zone: [{ a: 15100, b: 16400, n: 16, d0: 1.0, d1: 4.5, grp: [2, 5] }, { a: 16400, b: 18600, n: 24, d0: 1.0, d1: 5, grp: [2, 5] }, { a: 18600, b: 20200, n: 12, d0: 1.0, d1: 5, grp: [2, 4] }], scheda: schedaSilene });
   else buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
     zone: [{ a: 15100, b: 16400, n: 18, d0: 1.2, d1: 4.5 }, { a: 16400, b: 18600, n: 24, d0: 1.2, d1: 5 }], scheda: schedaSilene });
 }
 function schedaPioppo(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
+  const dove = sS > 20000 ? 'Qui, nella grande discesa, il Piano di gestione censisce nove boschetti alla giunzione fra Valle Majelama e Valle della Genzana, fra 1.400 e 1.600 m, a contatto con i noccioleti e con i ghiaioni.'
+                         : 'Qui, sotto la scarpata di faglia del versante sud-occidentale del Velino, il Piano di gestione censisce quattro boschetti fra 1.200 e 1.300 m, in contatto con le praterie secondarie.';
   openCard('<h2>Pioppo tremulo</h2><h3><i>Populus tremula</i> · km ' + km + '</h3>' +
-    '<p>L’albero che «trema»: il picciolo delle foglie è appiattito e basta un filo d’aria perché tutta la chioma frusci e scintilli. In ottobre vira a un <b>giallo intenso</b>, inconfondibile anche di corsa; la corteccia è liscia e grigio-verde.</p>' +
-    '<table><tr><th>Dove</th><td>Boscaglie umide nelle conche fresche e lungo gli impluvi, insieme al nocciolo: la sua presenza tradisce acqua nel suolo. Qui il tracciato scende nella conca più bassa della salita.</td></tr>' +
+    '<p>L’albero che «trema»: il picciolo delle foglie è appiattito e basta un filo d’aria perché tutta la chioma frusci e scintilli. In ottobre vira a un <b>giallo intenso</b>, inconfondibile anche di corsa; la corteccia è liscia e grigio-verde. Sul Velino resta basso, da 6 a 10 m.</p>' +
+    '<table><tr><th>Dove</th><td>Boschetti frammentari e minuscoli (in tutta la Riserva appena un ettaro, lo 0,2% del territorio), fra 1.200 e 1.700 m, su versanti esposti a sud dove accumuli argillosi trattengono l’acqua: il pioppo tradisce l’umidità nel suolo. ' + dove + '</td></tr>' +
+    '<tr><th>Compagni</th><td>Nocciolo, sorbo montano e viburno nello strato arbustivo; sotto, sigillo di Salomone, rosa canina e l’orchidea <i>Cephalanthera damasonium</i>.</td></tr>' +
     '<tr><th>Come vive</th><td>Specie pioniera e di luce, cresce in fretta e si propaga per polloni dalle radici: un gruppo di pioppi vicini è spesso un unico individuo.</td></tr>' +
-    '<tr><th>Per chi corre</th><td>Dove ci sono i pioppi il fondo resta umido e scivoloso anche con il sole: attenzione a radici e foglie bagnate.</td></tr></table>' +
-    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026 (Boschi e arbusteti).</p>');
+    '<tr><th>Per chi corre</th><td>Dove ci sono i pioppi il fondo resta umido anche con il sole: attenzione a radici e foglie bagnate.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità PT, <i>Corylo-Populetum tremuli</i>); Guida naturalistica SRM 2026.</p>');
 }
 function schedaSilene(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Silene a cuscinetto</h2><h3><i>Silene acaulis</i> · km ' + km + '</h3>' +
+  openCard('<h2>Silene a cuscinetto</h2><h3><i>Silene acaulis</i> subsp. <i>cenisia</i> · km ' + km + '</h3>' +
     '<p>Un cuscino compattissimo di foglioline, largo una mano e alto due dita, che si stringe su sé stesso per resistere a gelo e vento. <b>Fiorisce fra giugno e luglio</b>, quando si copre di piccoli fiori rosa-viola: qui la vedi in fiore per riconoscerla, ma a ottobre è solo un cuscino verde fra i sassi.</p>' +
-    '<table><tr><th>Dove</th><td>Fessure dei pavimenti calcarei sulla cresta fra Sevice e Cafornia (km 15–18,6), insieme a <i>Saxifraga speciosa</i>: la roccia nuda incisa dall’acqua.</td></tr>' +
-    '<tr><th>Età</th><td>Cresce di pochi millimetri l’anno: un cuscino largo una mano può avere decenni di vita.</td></tr>' +
-    '<tr><th>Attenzione</th><td>È l’habitat del percorso oggi in condizioni migliori (8240*, prioritario) e la sua tenuta dipende da un gesto solo: <b>corri sulla roccia, non sui cuscinetti</b>. Un piede fuori sentiero cancella mezzo secolo di crescita.</td></tr></table>' +
-    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026 (Alta quota); Studio di Incidenza Ambientale 2026.</p>');
+    '<table><tr><th>Dove</th><td>Solo nella zona sommitale del massiccio: vette di Velino, Cafornia e Sevice e creste fra di esse, fra 2.100 e 2.480 m (il Velino è l’unico massiccio dove scende sotto i 2.300). Su pendii poco inclinati esposti a nord-ovest e spazzati dal vento, fra i clasti della roccia spaccata dal gelo: un chilometro quadrato in tutto. Insieme a lei la <i>Saxifraga speciosa</i>.</td></tr>' +
+    '<tr><th>Tundra</th><td>È un relitto delle glaciazioni di 500.000 anni fa: suolo gelato otto mesi l’anno, gelate notturne tutto l’anno, copertura vegetale dal 10 al 40%. L’ambiente più freddo del Velino (habitat 8240*, pavimenti calcarei, prioritario).</td></tr>' +
+    '<tr><th>Età</th><td>Cresce di pochi millimetri l’anno: un cuscino largo una mano può avere decenni di vita. I cuscini trattengono il poco suolo che si forma.</td></tr>' +
+    '<tr><th>Attenzione</th><td>Associazione rara, presente in cinque soli biotopi relitti; oggi in buone condizioni, ma la sua tenuta dipende da un gesto solo: <b>corri sulla roccia, non sui cuscinetti</b>. Un piede fuori sentiero cancella mezzo secolo di crescita.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità SS, <i>Saxifrago speciosae-Silenetum cenisiae</i>); Guida naturalistica SRM 2026.</p>');
 }
 // ---------- coturnici: un gruppetto fermo sui pascoli sassosi sopra Passo Le Forche (km ~10,7) ----------
 // Il modello (semplificato, 6.000 triangoli) guarda verso +z e poggia su un sasso: si posa su terraVera,
