@@ -1065,7 +1065,7 @@ function buildPins(){
     const hit = ray.intersectObjects(pinGroup.children, false)[0];
     if (hit) { openPoi(hit.object.userData.poi); return; }
     // genziane
-    if (IMPOSTORS.length) { const hg = ray.intersectObjects(IMPOSTORS, false)[0]; if (hg && hg.instanceId !== undefined) { hg.object.userData.scheda(hg.object.userData.posti[hg.instanceId][5]); return; } }
+    if (IMPOSTORS.length) { const hg = ray.intersectObjects(IMPOSTORS, false)[0]; if (hg && hg.instanceId !== undefined && hg.object.userData.scheda) { hg.object.userData.scheda(hg.object.userData.posti[hg.instanceId][5]); return; } }
     // animali statici (coturnici): sfera di tocco invisibile attorno a ciascuno
     if (CLICCABILI.length) { const ha = ray.intersectObjects(CLICCABILI, false)[0]; if (ha) { ha.object.userData.scheda(ha.object.userData.sS); return; } }
     // targhette dei sentieri
@@ -2480,10 +2480,43 @@ async function loadVeg(loader){
     }
     return Math.sqrt(dm);
   };
+  // ---- alberi per fascia di vegetazione (Piano di gestione RNO M. Velino) ----
+  // L'export di Blender ha solo conifere a cono. Il Piano dice invece: querceti di roverella sotto i
+  // 1.200 m (versante SW del Rozza, valloni SW e S, Porclaneta); praterie e arbusteti sulla cresta del
+  // Rozza e sui versanti SW oltre i 1.250 m (niente alberi); rimboschimenti a pino nero solo sul
+  // versante meridionale, 1.200-1.400 m (sopra Fonte Canale); boscaglie fresche a nocciolo/pioppo
+  // e lembi di faggeta nel fondovalle di Valle Majelama, 1.400-1.700 m; sopra i 1.750 m nulla.
+  // km lungo il tracciato del punto piu' vicino: distingue il settore della discesa (Majelama, Fonte Canale)
+  const kmVicino = (x, y) => {
+    let dm = 1e18, im = 0;
+    for (let i = 0; i < rxs.length; i++) { const d = (rxs[i] - x) * (rxs[i] - x) + (rys[i] - y) * (rys[i] - y); if (d < dm) { dm = d; im = i; } }
+    return im * 4 / N * (TOT || route.total_km * 1000) / 1000;
+  };
+  const tipoAlbero = t => {
+    const e = route.elev_a * t[2] + route.elev_b, km = kmVicino(t[0], t[1]);
+    if (e > 1750) return null;
+    const discesa = km > 20.5 && km < 27;
+    if (discesa) return e >= 1400 ? 'faggio' : e >= 1150 ? 'pino' : 'quercia';
+    return e >= 1250 ? null : 'quercia';
+  };
+  const CIL = { Cylinder_026: ['Cone', 'Cone_001', 'Cone_002'], Cylinder_027: ['Cone_003', 'Cone_004', 'Cone_005'], Cylinder_028: ['Cone_006', 'Cone_007', 'Cone_008'] };
+  const tieni = {}, latif = { quercia: [], faggio: [] }, conta = { pino: 0, quercia: 0, faggio: 0, tolti: 0 };
+  for (const cil of Object.keys(CIL)) {
+    const arr = veg.inst[cil] || []; const mask = new Uint8Array(arr.length);
+    for (let i = 0; i < arr.length; i++) {
+      const t = arr[i], tipo = tipoAlbero(t);
+      if (tipo === 'pino') { mask[i] = 1; conta.pino++; }
+      else if (tipo) { latif[tipo].push(t); conta[tipo]++; }
+      else conta.tolti++;
+    }
+    tieni[cil] = mask; for (const c of CIL[cil]) tieni[c] = mask;
+  }
+  console.log('alberi:', conta);
   for (const key of Object.keys(veg.inst)) {
     let arr = veg.inst[key];
     const proto = lib[veg.protos[key]];
     if (!proto || !arr.length) continue;
+    if (tieni[key]) { const m = tieni[key]; arr = arr.filter((t, i) => m[i]); if (!arr.length) continue; }
     const isGent = key === 'Sphere_155' || key.startsWith('Cone_03') ||
                    /^M_EX_gen/.test((proto.material && proto.material.name) || '');
     if (isGent) {
@@ -2562,6 +2595,17 @@ async function loadVeg(loader){
     VEG_IM.push({ im, n: arr.length });
   }
   console.log('vegetazione:', Object.keys(veg.inst).map(k => k + ':' + veg.inst[k].length).join(', '));
+  // latifoglie: una InstancedMesh per tipo; posizione a terra (terraVera), altezza in metri x scala dell'export
+  const K = (route.lino_h || 7.8) / 1.7;
+  const posti = tipo => latif[tipo].map(t => {
+    const x = t[0], z = -t[1];
+    let y = terraVera(x, z, t[2] + 10); if (y < -1e3) y = groundAt(x, z);
+    return [x, y - 0.05, z, t[3], (tipo === 'quercia' ? 0.55 : 0.70) * (0.8 + 0.5 * (t[4] || 1)), 0];
+  });
+  const OCRA = new THREE.Color(1.08, 0.82, 0.46);
+  const tintaQuercia = (c, r, rnd) => { c.setHSL(0, 0, 0.85 + r * 0.3); if (rnd() < 0.4) c.multiply(OCRA); };   // due piante su cinque gia' virate all'ocra
+  if (latif.quercia.length) { const im = buildPiantaLowPoly({ nome: 'Querce', geo: geoQuercia(31), seme: 3101, vento: 0.9, hVento: 7, posti: posti('quercia'), tinta: tintaQuercia, scheda: schedaRoverella }); VEG_IM.push({ im, n: im.count }); }
+  if (latif.faggio.length) { const im = buildPiantaLowPoly({ nome: 'Faggi', geo: geoFaggio(41), seme: 4101, vento: 1.1, hVento: 10, posti: posti('faggio'), scheda: schedaBoscaglia }); VEG_IM.push({ im, n: im.count }); }
 }
 
 // ---------- animali riggati (Meshy, animati per ossa): lupo ai pratoni e cervo in Valle Porclaneta ----------
@@ -2811,18 +2855,43 @@ function sfaccetta(g0, rnd, amp, colFn){
   f.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return f;
 }
-function geoPioppo(seme){
+// latifoglia low-poly parametrica: tronco + lobi di chioma, colori per faccia. spec:
+//  tronco [r su, r giu, altezza], lobi [[x,y,z,raggio,scalaY]...], det (suddivisioni), amp (bozze),
+//  col(c, y, ny, r) colore della chioma, cort(c, r) colore della corteccia
+function geoLatifoglia(seme, spec){
   const rnd = rngDa(seme), parti = [];
-  // tronco: leggermente conico, 3,2 m fino alla chioma; corteccia grigio-verde chiara
-  const tr = new THREE.CylinderGeometry(0.17, 0.30, 4.2, 7, 1); tr.translate(0, 2.1, 0);
-  parti.push(sfaccetta(tr, rnd, 0.04, (c, y, ny, r) => c.setHSL(0.19, 0.08, 0.50 + r() * 0.10)));
-  // chioma: lobi sovrapposti (ovoide allungato come il pioppo), giallo d'autunno piu' chiaro in alto
-  const lobi = [[0, 7.6, 0, 2.3, 1.55], [0.9, 6.2, 0.4, 1.6, 1.3], [-0.9, 6.5, -0.3, 1.5, 1.3], [0.2, 9.8, -0.5, 1.4, 1.5], [-0.3, 4.6, 0.9, 1.2, 1.1]];
-  for (const [x, y, z, r, sy] of lobi) {
-    const g = new THREE.IcosahedronGeometry(r, 2); g.scale(1, sy, 1); g.translate(x, y, z);
-    parti.push(sfaccetta(g, rnd, 0.11, (c, yy, ny, rr) => c.setHSL(0.11 + (rr() - 0.5) * 0.03, 0.78, 0.42 + 0.10 * ny + (yy - 4) / 70 + (rr() - 0.5) * 0.08)));
+  const [r0, r1, h] = spec.tronco;
+  const tr = new THREE.CylinderGeometry(r0, r1, h, 7, 1); tr.translate(0, h / 2, 0);
+  parti.push(sfaccetta(tr, rnd, 0.04, (c, y, ny, r) => spec.cort(c, r)));
+  for (const [x, y, z, r, sy] of spec.lobi) {
+    const g = new THREE.IcosahedronGeometry(r, spec.det); g.scale(1, sy, 1); g.translate(x, y, z);
+    parti.push(sfaccetta(g, rnd, spec.amp, spec.col));
   }
-  const g = mergeGeometries(parti, false); g.computeBoundingSphere(); return g;   // ~1.400 triangoli
+  const g = mergeGeometries(parti, false); g.computeBoundingSphere(); return g;
+}
+function geoPioppo(seme){
+  // tronco snello, corteccia grigio-verde chiara; chioma ovoide allungata, giallo d'autunno piu' chiaro in alto (~1.400 tris)
+  return geoLatifoglia(seme, { tronco: [0.17, 0.30, 4.2], det: 2, amp: 0.11,
+    lobi: [[0, 7.6, 0, 2.3, 1.55], [0.9, 6.2, 0.4, 1.6, 1.3], [-0.9, 6.5, -0.3, 1.5, 1.3], [0.2, 9.8, -0.5, 1.4, 1.5], [-0.3, 4.6, 0.9, 1.2, 1.1]],
+    cort: (c, r) => c.setHSL(0.19, 0.08, 0.50 + r() * 0.10),
+    col: (c, yy, ny, rr) => c.setHSL(0.11 + (rr() - 0.5) * 0.03, 0.78, 0.42 + 0.10 * ny + (yy - 4) / 70 + (rr() - 0.5) * 0.08) });
+}
+// roverella (Quercus pubescens) del paesaggio: bassa e larga, chioma a cupola irregolare; a meta' ottobre
+// il verde-oliva vira a ocra e bruno, in modo diverso da pianta a pianta (la tinta per istanza fa il resto).
+// Poche facce (3 lobi a suddivisione 1): e' l'albero piu' numeroso, ~250 triangoli.
+function geoQuercia(seme){
+  return geoLatifoglia(seme, { tronco: [0.26, 0.42, 2.2], det: 1, amp: 0.09,
+    lobi: [[0, 4.6, 0, 2.6, 0.85], [1.5, 3.9, 0.5, 1.8, 0.9], [-1.4, 4.1, -0.8, 1.9, 0.85], [0.3, 3.6, 1.5, 1.5, 0.9]],
+    cort: (c, r) => c.setHSL(0.08, 0.16, 0.24 + r() * 0.08),
+    col: (c, yy, ny, rr) => c.setHSL(0.165 + (rr() - 0.5) * 0.04, 0.46, 0.31 + 0.09 * ny + (rr() - 0.5) * 0.05) });
+}
+// faggio / nocciolo delle boscaglie fresche (fondovalle di Valle Majelama): chioma alta e piena,
+// a ottobre rame-arancio con residui di verde (~330 triangoli)
+function geoFaggio(seme){
+  return geoLatifoglia(seme, { tronco: [0.16, 0.26, 3.6], det: 1, amp: 0.10,
+    lobi: [[0, 7.4, 0, 2.6, 1.25], [1.2, 5.6, 0.5, 1.8, 1.0], [-1.1, 6.0, -0.6, 1.7, 1.0], [0.1, 10.2, 0.2, 1.5, 1.0]],
+    cort: (c, r) => c.setHSL(0.10, 0.06, 0.52 + r() * 0.08),
+    col: (c, yy, ny, rr) => c.setHSL(0.075 + (rr() - 0.5) * 0.04, 0.72, 0.40 + 0.09 * ny + (rr() - 0.5) * 0.07) });
 }
 function geoSilene(seme){
   // cuscino morbido: cupola schiacciata un po' bitorzoluta, ombreggiatura liscia; i fiori stanno nella texture
@@ -2884,8 +2953,8 @@ function buildPiantaLowPoly(cfg){
   transformed.x += sw * h * h * ${vento.toFixed(2)}; transformed.z += sw * h * h * ${(vento * 0.6).toFixed(2)}; }`);
   };
   m.customProgramCacheKey = () => 'lowpoly-' + cfg.nome;
-  const rnd = rngDa(cfg.seme), posti = [], rocce = [];
-  for (const z of cfg.zone) for (let k = 0; k < z.n; k++) {
+  const rnd = rngDa(cfg.seme), posti = cfg.posti || [], rocce = [];
+  for (const z of (cfg.zone || [])) for (let k = 0; k < z.n; k++) {
     const sS = z.a + rnd() * (z.b - z.a);
     const lato = rnd() < 0.5 ? -1 : 1, dist = z.d0 + rnd() * (z.d1 - z.d0);
     posAt(sS, tmpA); tanAt(sS, tmpB);
@@ -2932,7 +3001,9 @@ function buildPiantaLowPoly(cfg){
       if (Math.abs(gx) < 3 && Math.abs(gz) < 3) { nrm.set(-gx, 1, -gz).normalize(); Qt.setFromUnitVectors(up, nrm); Q.premultiply(Qt); }
     }
     M.compose(P, Q, S); im.setMatrixAt(i, M);
-    const r = rnd(); col.setHSL(0, 0, 0.88 + r * 0.24); im.setColorAt(i, col);   // tinta per pianta (chiaro/scuro)
+    const r = rnd();
+    if (cfg.tinta) cfg.tinta(col, r, rnd); else col.setHSL(0, 0, 0.88 + r * 0.24);   // tinta per pianta (chiaro/scuro)
+    im.setColorAt(i, col);
   });
   im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
   im.castShadow = cfg.ombra !== false; im.receiveShadow = true; im.frustumCulled = false; im.name = cfg.nome;
@@ -2980,6 +3051,20 @@ function schedaPioppo(sS){
     '<tr><th>Come vive</th><td>Specie pioniera e di luce, cresce in fretta e si propaga per polloni dalle radici: un gruppo di pioppi vicini è spesso un unico individuo.</td></tr>' +
     '<tr><th>Per chi corre</th><td>Dove ci sono i pioppi il fondo resta umido anche con il sole: attenzione a radici e foglie bagnate.</td></tr></table>' +
     '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità PT, <i>Corylo-Populetum tremuli</i>); Guida naturalistica SRM 2026.</p>');
+}
+function schedaRoverella(){
+  openCard('<h2>Roverella</h2><h3><i>Quercus pubescens</i> · querceto termofilo</h3>' +
+    '<p>La quercia dei versanti caldi e assolati: bassa, tozza, con foglie lobate vellutate di sotto che a metà ottobre virano dal verde oliva all’ocra e al bruno e restano sui rami secche fino all’inverno. Con lei orniello e citiso, e nelle radure i prati aridi ricchi di orchidee.</p>' +
+    '<table><tr><th>Dove</th><td>Sul Velino i querceti di roverella sopravvivono in pochi lembi: il versante sud-occidentale del Monte Rozza fino a 1.200 m, strisce nei valloni esposti a sud e il bosco di Valle Porclaneta. Le colline verso Rosciolo alternano boschetti, campi e carrarecce.</td></tr>' +
+    '<tr><th>Perché conta</th><td>Habitat prioritario europeo 91AA* (boschi orientali di quercia bianca), fra i più fragili del massiccio: formatosi solo 5–10.000 anni fa e in gran parte distrutto dall’uomo dal Medioevo. Il tracciato lo lambisce a monte di Passo Le Forche senza mai attraversarlo.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino; Guida naturalistica SRM 2026.</p>');
+}
+function schedaBoscaglia(){
+  openCard('<h2>Boscaglie fresche di fondovalle</h2><h3>nocciolo, faggio, pioppo tremulo · Valle Majelama</h3>' +
+    '<p>Nelle conche fresche e sul fondo della Valle Majelama, dove il suolo trattiene l’acqua, crescono boscaglie di <b>nocciolo</b> con pioppo tremulo e, nei punti più freschi, lembi di <b>faggeta</b>. A ottobre sono la macchia di colore della discesa: rame, arancio e giallo contro i pascoli già spenti.</p>' +
+    '<table><tr><th>Dove</th><td>Fondovalle di Valle Majelama fra 1.400 e 1.700 m, a contatto con i ghiaioni e con le praterie; l’unica vera foresta di faggio del massiccio è invece nella Val di Teve, oltre la cresta.</td></tr>' +
+    '<tr><th>Per chi corre</th><td>Fondo umido anche con il sole, radici e foglie bagnate: il tratto più scivoloso della grande discesa.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità CA, PT, PF); Guida naturalistica SRM 2026.</p>');
 }
 function schedaSilene(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
