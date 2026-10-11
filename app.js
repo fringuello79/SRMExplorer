@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const VER = 'v80';
+const VER = 'v81';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -425,20 +425,17 @@ function buildStage(){
   fill.position.set(5600, 4000, 4800);
   scene.add(hemi, sunLight, sunLight.target, fill);
   const liv0 = qualIniziale();
-  QUAL.tetto = Math.max(liv0, QUAL.mob ? 2 : 3);
-  SHADOWS = liv0 >= 2;        // ombre vere solo dal livello alto (PC e telefoni forti); sotto, restano quelle delle nuvole
-  if (SHADOWS) {
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    sunLight.castShadow = true;
-    sunLight.shadow.mapSize.set(QUAL.mob ? 1024 : 2048, QUAL.mob ? 1024 : 2048);
-    const sk = sunLight.shadow.camera;
-    sk.left = -430; sk.right = 430; sk.top = 430; sk.bottom = -430;
-    sk.near = 150; sk.far = 4500;
-    sk.updateProjectionMatrix();   // senza questo la camera delle ombre resta a +-5 m / far 500: nessuna ombra in scena
-    sunLight.shadow.bias = -0.00055;
-    sunLight.shadow.normalBias = 0.6;
-  }
+  QUAL.tetto = QUAL.tettoMax = QUAL.mob ? 2 : 3;
+  // Ombre: la shadow map e' sempre abilitata nel renderer (costa nulla finche' nessuna luce proietta);
+  // dimensione della mappa, tipo di filtro e inquadratura li regola applicaQualita / inquadraOmbre.
+  // Dal livello 1 in su le ombre vere ci sono; al livello 0 resta l'ombra di contatto sotto i personaggi.
+  SHADOWS = true;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = QUAL.mob ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+  const sk = sunLight.shadow.camera;
+  sk.near = 150; sk.far = 4500;
+  sunLight.shadow.bias = -0.0003;
+  inquadraOmbre(430);
   applicaQualita(liv0);
   addEventListener('resize', () => {
     const W = Math.max(320, innerWidth || 1280), H = Math.max(240, innerHeight || 720);
@@ -1676,43 +1673,95 @@ let ORTHO = null, HG = null, sunLight = null, SHADOWS = false, HEMI = null, SEVI
 // ombre, dettaglio ravvicinato del terreno, facciate, numero di alberi e nuvole, distanza della nebbia.
 const QUAL_U = { value: 2 };            // uniform condiviso dagli shader (terreno, case)
 const FOG_VOLO = [3800, 6500, 9500, 11500];   // nebbia in volo per livello: con l'anello esterno si vede lontano
-const QUAL = { liv: 2, tetto: 3, mob: false, t: 0, n: 0, ok: 0, avvio: 0 };
+const QUAL = { liv: 2, tetto: 3, tettoMax: 3, mob: false, t: 0, n: 0, ok: 0, giu: 0, avvio: 0, res: 1, salva: 0 };
 const VEG_IM = [];                      // { im, n }: mesh istanziate della vegetazione
+// Mappa delle ombre per livello (lato in px): 0 = niente ombre vere (solo quelle di contatto).
+const OMBRA_PX = [0, 1024, 2048, 4096];
+const QKEY = 'srmx_q2';                 // livello raggiunto nelle sessioni precedenti (per dispositivo)
 function qualIniziale(){
   const mob = /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
   QUAL.mob = mob;
   const q = new URLSearchParams(location.search).get('q');
   if (q !== null && /^[0-3]$/.test(q)) { QUAL.lock = true; return +q; }      // ?q=0..3 per le prove (livello bloccato)
-  if (!mob) return 3;
-  const mem = navigator.deviceMemory || 4, cpu = navigator.hardwareConcurrency || 4;
-  if (mem <= 3 || cpu <= 4) return 0;
-  if (mem <= 4 || cpu <= 6) return 1;
-  return 2;
+  let l;
+  if (!mob) l = 3;
+  else {
+    const mem = navigator.deviceMemory || 4, cpu = navigator.hardwareConcurrency || 4;
+    l = (mem <= 3 || cpu <= 4) ? 0 : (mem <= 4 || cpu <= 6) ? 1 : 2;
+  }
+  // memoria della sessione precedente: si parte dal livello che il dispositivo ha davvero retto
+  try { const m = JSON.parse(localStorage.getItem(QKEY) || 'null'); if (m && m.ua === navigator.userAgent.length && typeof m.liv === 'number') l = clamp(m.liv, 0, 3); } catch (e) { /* storage bloccato */ }
+  return l;
+}
+function salvaQualita(){
+  try { localStorage.setItem(QKEY, JSON.stringify({ liv: QUAL.liv, ua: navigator.userAgent.length, t: Date.now() })); } catch (e) { /* niente */ }
+}
+// inquadratura della camera delle ombre: un quadrato di lato 2*half (unita' di scena) centrato sul
+// bersaglio della luce. Piu' e' stretto, piu' l'ombra e' nitida: lo si stringe quando la camera e'
+// vicina a Lino (il nitido serve li') e lo si allarga quando ci si allontana (servono le case lontane).
+let ombraHalf = 0;
+function inquadraOmbre(half){
+  if (!sunLight || Math.abs(half - ombraHalf) < 1) return;
+  ombraHalf = half;
+  const sk = sunLight.shadow.camera;
+  sk.left = -half; sk.right = half; sk.top = half; sk.bottom = -half;
+  sk.updateProjectionMatrix();
+  // normalBias in proporzione al texel della mappa: abbastanza per evitare l'acne, non tanto da staccare l'ombra dai piedi
+  const px = sunLight.shadow.mapSize.x || 2048;
+  sunLight.shadow.normalBias = clamp(2 * half / px * 1.6, 0.05, 0.6);
 }
 function applicaQualita(l){
   l = clamp(l, 0, QUAL.tetto);
   QUAL.liv = l; QUAL_U.value = l;
-  if (renderer) {
-    const dpr = devicePixelRatio || 1;
-    renderer.setPixelRatio([1, Math.min(dpr, 1.5), Math.min(dpr, 2), Math.min(dpr, 2)][l]);
+  applicaRisoluzione();
+  if (sunLight) {
+    const px = OMBRA_PX[l];
+    if (px > 0) {
+      if (sunLight.shadow.mapSize.x !== px) {
+        sunLight.shadow.mapSize.set(px, px);
+        if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }   // si ricrea alla prossima resa
+        ombraHalf = 0; inquadraOmbre(ombraHalf || 430);
+      }
+      sunLight.castShadow = true;
+    } else sunLight.castShadow = false;    // spegnere la luce-ombra ricompila da solo i programmi
   }
-  if (SHADOWS && sunLight) sunLight.castShadow = l >= 2;     // spegnere la luce-ombra ricompila da solo i programmi
   const fr = [0.55, 0.8, 1, 1][l];
   for (const v of VEG_IM) v.im.count = Math.max(1, Math.round(v.n * fr));
   for (let i = 0; i < NUVOLE.length; i++) NUVOLE[i].visible = l > 0 || i % 2 === 0;
   if (scene && scene.fog) scene.fog.far = FLY.on ? FOG_VOLO[l] : (l === 0 ? 11000 : 18000);
-  console.log('qualita\':', ['essenziale', 'media', 'alta', 'massima'][l]);
+  console.log('qualita\':', ['essenziale', 'media', 'alta', 'massima'][l], 'risoluzione', QUAL.res.toFixed(2));
 }
-// guardia prestazioni: finestre di 3 s sul dt reale (non su quello limitato del gioco); sotto i 27 fps
-// si scende di un livello e quel livello diventa il tetto; sopra i 50 fps per tre finestre si risale
+// risoluzione di resa = pixel ratio del livello x fattore dinamico QUAL.res (0,6-1): e' la prima
+// leva che si muove, a piccoli passi, e non si nota
+function applicaRisoluzione(){
+  if (!renderer) return;
+  const dpr = devicePixelRatio || 1;
+  const base = [1, Math.min(dpr, 1.5), Math.min(dpr, 2), Math.min(dpr, 2)][QUAL.liv];
+  renderer.setPixelRatio(Math.max(0.5, base * QUAL.res));
+}
+// guardia prestazioni: finestre di 1 s sul dt reale (non su quello limitato del gioco).
+//  - sotto i 40 fps si abbassa prima la risoluzione (a passi del 5%, fino al 60%);
+//  - se anche al 60% si resta sotto i 27 fps per due finestre di fila si scende di livello;
+//  - sopra i 55 fps la risoluzione risale (3% a finestra); a risoluzione piena e > 55 fps per 8 finestre
+//    si risale di livello (fino al tetto del dispositivo): un intoppo momentaneo non costa nulla per sempre.
+// Non si misura nei primi 10 s (compilazione degli shader) ne' mentre si caricano le tile esterne.
 function guardiaFps(dtReale){
   QUAL.t += dtReale; QUAL.n++;
-  if (QUAL.t < 3) return;
+  if (QUAL.t < 1) return;
   const fps = QUAL.n / QUAL.t; QUAL.t = 0; QUAL.n = 0;
-  if (QUAL.lock || performance.now() < QUAL.avvio + 8000) return;        // i primi secondi: compilazione shader, caricamenti
-  if (fps < 27 && QUAL.liv > 0) { QUAL.tetto = QUAL.liv - 1; applicaQualita(QUAL.liv - 1); QUAL.ok = 0; }
-  else if (fps > 50 && QUAL.liv < QUAL.tetto) { if (++QUAL.ok >= 3) { applicaQualita(QUAL.liv + 1); QUAL.ok = 0; } }
-  else QUAL.ok = 0;
+  if (QUAL.lock || performance.now() < QUAL.avvio + 10000) return;
+  if (typeof extLoading !== 'undefined' && extLoading) return;
+  if (document.hidden) return;
+  if (fps < 40) {
+    QUAL.ok = 0;
+    if (QUAL.res > 0.6) { QUAL.res = Math.max(0.6, QUAL.res - 0.05); applicaRisoluzione(); QUAL.giu = 0; }
+    else if (fps < 27 && QUAL.liv > 0 && ++QUAL.giu >= 2) { QUAL.giu = 0; QUAL.res = 0.85; applicaQualita(QUAL.liv - 1); salvaQualita(); }
+  } else if (fps > 55) {
+    QUAL.giu = 0;
+    if (QUAL.res < 1) { QUAL.res = Math.min(1, QUAL.res + 0.03); applicaRisoluzione(); QUAL.ok = 0; }
+    else if (QUAL.liv < QUAL.tetto && ++QUAL.ok >= 8) { QUAL.ok = 0; applicaQualita(QUAL.liv + 1); salvaQualita(); }
+  } else { QUAL.giu = 0; QUAL.ok = 0; }
+  if (++QUAL.salva % 30 === 0) salvaQualita();
 }
 const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
 const OC = [0, 0, 0];
@@ -4298,6 +4347,31 @@ function posaCervo(dt, gp, L){
 // ombra di contatto sotto il cervo: macchia morbida che resta anche quando le ombre vere sono spente
 // (qualita' bassa) e "incolla" l'animale al suolo
 let OMBRA_C = null;
+// ombra di contatto di Lino: disco sfumato sul terreno, sempre presente (anche senza ombre vere, e come
+// occlusione ai piedi quando ci sono). Si rifa' la texture del cervo, dimensionata su Lino.
+let OMBRA_L = null;
+function buildOmbraLino(){
+  if (OMBRA_L) return OMBRA_L;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+  const x = cv.getContext('2d'); const gr = x.createRadialGradient(64, 64, 3, 64, 64, 62);
+  gr.addColorStop(0, 'rgba(0,0,0,0.5)'); gr.addColorStop(0.5, 'rgba(0,0,0,0.25)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+  x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(cv);
+  const K = (route.lino_h || 7.8) / 1.7;
+  const geo = new THREE.PlaneGeometry(0.9 * K, 1.1 * K); geo.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+  OMBRA_L = new THREE.Mesh(geo, mat); OMBRA_L.renderOrder = 3; OMBRA_L.name = 'OmbraLino'; OMBRA_L.frustumCulled = false;
+  scene.add(OMBRA_L);
+  return OMBRA_L;
+}
+function tickOmbraContatto(p, yaw){
+  const o = OMBRA_L || buildOmbraLino();
+  o.visible = !FLY.on && !(st.view === 'fpv');
+  if (!o.visible) return;
+  o.position.set(p.x, p.y + 0.08, p.z); o.rotation.y = yaw;
+  // con le ombre vere il disco resta tenue (occlusione di contatto); senza, e' l'unica ombra
+  o.material.opacity = sunLight && sunLight.castShadow ? 0.45 : 0.9;
+}
 function buildOmbraCervo(){
   if (OMBRA_C) return OMBRA_C;
   const cv = document.createElement('canvas'); cv.width = cv.height = 128;
@@ -4746,7 +4820,10 @@ function tick(){
     sunLight.position.set(tmpA.x + SUNDIR.x * 2300, tmpA.y + SUNDIR.y * 2300, tmpA.z + SUNDIR.z * 2300);
     sunLight.target.position.copy(tmpA);
     sunLight.target.updateMatrixWorld();
+    // quadro delle ombre: stretto quando si segue Lino da vicino (ombra nitida ai piedi), largo da lontano
+    inquadraOmbre(clamp(camera.position.distanceTo(tmpA) * 1.5, 110, 430));
   }
+  tickOmbraContatto(tmpA, rotY);
   // grifoni
   const tNow = performance.now() / 1000;
   for (const m of grifs) {
