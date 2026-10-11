@@ -49,21 +49,31 @@ const AVATARS = [
   { id: 'vincitore', nome: 'Vincitore<br>SRM 2026', attivo: false, nota: 'si svela dopo il 18 ottobre' },
   { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', attivo: false, nota: 'si svela dopo il 18 ottobre' }
 ];
-const SAGOMA = '<svg class="ico" viewBox="0 0 44 44" fill="currentColor" aria-hidden="true"><circle cx="27" cy="7" r="4.2"/>' +
-  '<path d="M23.5 12.5c2.4-.6 4.3.6 5 2.4l2.6 6.3 6.4 2.4c1.1.4 1.6 1.6 1.2 2.6-.4 1-1.5 1.5-2.6 1.1l-7.6-2.8c-.7-.3-1.2-.8-1.5-1.5l-1.1-2.6-3.1 6.2 5.2 4.8c.5.5.8 1.2.7 1.9l-1.2 8.4c-.2 1.2-1.3 2-2.5 1.8-1.2-.2-2-1.3-1.8-2.5l1-7.1-6.1-5.4-4.3 6.6c-.3.5-.8.8-1.4.9l-7.9 1.2c-1.2.2-2.3-.6-2.5-1.8-.2-1.2.6-2.3 1.8-2.5l6.8-1 6.3-10.5-3.7 1.4-2.2 5.1c-.5 1.1-1.7 1.6-2.8 1.1-1.1-.5-1.6-1.7-1.1-2.8l2.8-6.4c.3-.6.8-1.1 1.4-1.3z"/></svg>';
+// Carosello: Lino al centro (come sempre), due frecce ai lati. A destra "Vincitore SRM 2026", a sinistra
+// "Vincitrice SRM 2026": finche' non sono attivi si vede una sagoma fantasma con il punto interrogativo
+// e il pulsante VAI resta spento; si torna su Lino con le frecce (o con le frecce della tastiera).
+let AV_IDX = 0;
 function buildAvatarPicker(){
-  const box = $('avatars'), h = $('avatars-h'); if (!box) return;
-  box.innerHTML = '';
-  for (const av of AVATARS) {
-    const d = document.createElement('div');
-    d.className = 'av' + (av.attivo ? (st.avatar === av.id ? ' sel' : '') : ' off');
-    d.setAttribute('role', 'button'); d.setAttribute('aria-disabled', av.attivo ? 'false' : 'true');
-    d.innerHTML = '<span class="lab">' + av.nome + '</span>' + SAGOMA + (av.attivo ? '' : '<span class="q">?</span>') +
-      (av.nota && !av.attivo ? '<span class="nota">' + av.nota + '</span>' : '');
-    if (av.attivo) d.onclick = () => { st.avatar = av.id; box.querySelectorAll('.av').forEach(e => e.classList.remove('sel')); d.classList.add('sel'); };
-    box.appendChild(d);
-  }
-  box.classList.add('on'); h.classList.add('on');
+  const prev = $('av-prev'), next = $('av-next'); if (!prev || !next) return;
+  prev.classList.add('on'); next.classList.add('on');
+  prev.onclick = () => mostraAvatar(AV_IDX - 1); next.onclick = () => mostraAvatar(AV_IDX + 1);
+  addEventListener('keydown', e => {
+    if ($('loader').style.display === 'none') return;
+    if (e.key === 'ArrowLeft') mostraAvatar(AV_IDX - 1); else if (e.key === 'ArrowRight') mostraAvatar(AV_IDX + 1);
+  });
+  mostraAvatar(0);
+}
+function mostraAvatar(i){
+  const n = AVATARS.length; AV_IDX = ((i % n) + n) % n;
+  const av = AVATARS[AV_IDX], ghost = $('av-ghost'), nome = $('lino-nome'), spin = $('spin-img'), svg = $('spin-svg'), chip = $('spin-chip'), go = $('go-btn');
+  const lino = av.id === 'lino';
+  if (ghost) { ghost.classList.toggle('on', !lino); if (!lino) { $('av-lab').textContent = av.nome.replace('<br>', ' '); $('av-nota').textContent = av.nota || ''; } }
+  if (nome) nome.style.visibility = lino ? 'visible' : 'hidden';
+  if (spin) spin.style.visibility = lino ? 'visible' : 'hidden';
+  if (svg) svg.style.visibility = lino ? 'visible' : 'hidden';
+  if (chip) chip.style.visibility = lino ? 'visible' : 'hidden';
+  if (go) { go.classList.toggle('spento', !av.attivo); go.disabled = !av.attivo; go.textContent = av.attivo ? 'VAI AL PERCORSO' : 'NON ANCORA DISPONIBILE'; }
+  if (av.attivo) st.avatar = av.id;
 }
 
 let route, N, TOT, renderer, scene, camera, controls, clock;
