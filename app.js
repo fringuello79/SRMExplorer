@@ -2122,7 +2122,7 @@ function arredaCase(root){
     let g = o.geometry;
     if (g.index) { g = g.toNonIndexed(); o.geometry = g; }
     const pos = g.getAttribute('position'), nv = pos.count;
-    const aUV = new Float32Array(nv * 2), aWall = new Float32Array(nv * 3);
+    const aUV = new Float32Array(nv * 2), aWall = new Float32Array(nv * 3), aCasa = new Float32Array(nv);
     if (muro) {
       // raggruppa i triangoli per piano (normale + offset) = una parete
       const groups = new Map(), tri = [];
@@ -2136,27 +2136,35 @@ function arredaCase(root){
         const d = N.dot(P);
         const key = Math.round(N.x * 20) + '_' + Math.round(N.z * 20) + '_' + Math.round(d / 0.25);
         let gr = groups.get(key);
-        if (!gr) { gr = { n: N.clone(), t: new THREE.Vector3(N.z, 0, -N.x).normalize(), umin: 1e9, umax: -1e9, vmin: 1e9, vmax: -1e9, tris: [] }; groups.set(key, gr); }
+        if (!gr) { gr = { n: N.clone(), d, t: new THREE.Vector3(N.z, 0, -N.x).normalize(), umin: 1e9, umax: -1e9, vmin: 1e9, vmax: -1e9, tris: [] }; groups.set(key, gr); }
         for (const W of [P, Q, R]) { const u = W.dot(gr.t), v = W.y; if (u < gr.umin) gr.umin = u; if (u > gr.umax) gr.umax = u; if (v < gr.vmin) gr.vmin = v; if (v > gr.vmax) gr.vmax = v; }
         gr.tris.push(i); tri.push(gr);
       }
       let gid = 0;
       for (const gr of groups.values()) {
         gr.id = (gid++ * 0.618 + o.position.x * 0.013 + o.position.z * 0.017) % 1;
+        // "casa" = cella di 9 m attorno al centro della parete: le pareti di uno stesso edificio
+        // cadono quasi sempre nella stessa cella e prendono la stessa tinta d'intonaco
+        const cu = (gr.umin + gr.umax) / 2;
+        const cx = gr.n.x * gr.d + gr.t.x * cu - gr.n.x * 3.0, cz = gr.n.z * gr.d + gr.t.z * cu - gr.n.z * 3.0;   // 3 m dentro la parete, verso l'interno della casa
+        const wx = Math.floor(cx / 9), wz = Math.floor(cz / 9);
+        const h = Math.sin(wx * 12.9898 + wz * 78.233) * 43758.5453; gr.casa = h - Math.floor(h);
       }
       for (let i = 0; i < nv; i += 3) {
         const gr = tri[i / 3];
         for (let k = 0; k < 3; k++) {
           const j = i + k;
-          if (!gr) { aWall[j * 3] = 0; aWall[j * 3 + 1] = 0; aWall[j * 3 + 2] = 0; continue; }
+          if (!gr) { aWall[j * 3] = 0; aWall[j * 3 + 1] = 0; aWall[j * 3 + 2] = 0; aCasa[j] = 0.5; continue; }
           P.fromBufferAttribute(pos, j).applyMatrix4(o.matrixWorld);
           aUV[j * 2] = P.dot(gr.t) - gr.umin; aUV[j * 2 + 1] = P.y - gr.vmin;
           aWall[j * 3] = gr.umax - gr.umin; aWall[j * 3 + 1] = gr.vmax - gr.vmin; aWall[j * 3 + 2] = gr.id;
+          aCasa[j] = gr.casa;
         }
       }
     }
     g.setAttribute('aUV', new THREE.BufferAttribute(aUV, 2));
     g.setAttribute('aWall', new THREE.BufferAttribute(aWall, 3));
+    g.setAttribute('aCasa', new THREE.BufferAttribute(aCasa, 1));
     const mat = o.material = o.material.clone();
     // three mette in cache i programmi per testo di onBeforeCompile: muro e tetto hanno lo stesso
     // testo sorgente, quindi serve una chiave esplicita o il tetto riusa il programma del muro
@@ -2165,11 +2173,11 @@ function arredaCase(root){
       CASE_SH.push(sh);
       sh.uniforms.uQual = QUAL_U;
       sh.vertexShader = sh.vertexShader
-        .replace('#include <common>', '#include <common>\nattribute vec2 aUV; attribute vec3 aWall; varying vec2 vUVc; varying vec3 vWall; varying vec3 vWp; varying float vNyc;')
-        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvUVc = aUV; vWall = aWall; vWp = (modelMatrix * vec4(position, 1.0)).xyz; vNyc = normalize(mat3(modelMatrix) * normal).y;');
+        .replace('#include <common>', '#include <common>\nattribute vec2 aUV; attribute vec3 aWall; attribute float aCasa; varying vec2 vUVc; varying vec3 vWall; varying vec3 vWp; varying float vNyc; varying float vCasa;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvUVc = aUV; vWall = aWall; vCasa = aCasa; vWp = (modelMatrix * vec4(position, 1.0)).xyz; vNyc = normalize(mat3(modelMatrix) * normal).y;');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-varying vec2 vUVc; varying vec3 vWall; varying vec3 vWp; varying float vNyc;
+varying vec2 vUVc; varying vec3 vWall; varying vec3 vWp; varying float vNyc; varying float vCasa;
 uniform float uQual;
 float hsh(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float nz2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -2180,9 +2188,21 @@ float nz2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   float W = vWall.x, H = vWall.y, id = vWall.z;
   if (W > 1.5 && H > 2.0) {
     vec3 col = diffuseColor.rgb;
-    // intonaco: tinta leggermente diversa per parete, grana e macchie di umido in basso
+    // intonaco: una delle tinte dei paesi marsicani per edificio (ocra, giallo paglia, rosa antico,
+    // bianco sporco, grigio chiaro, beige), scelta dall'id della casa; poi grana e sporco
+    {
+      float ic = floor(hsh(vec2(floor(vCasa * 97.0), 1.7)) * 6.0);   // stessa tinta su tutte le pareti della casa
+      vec3 tinta = ic < 0.5 ? vec3(0.84, 0.70, 0.46) : ic < 1.5 ? vec3(0.90, 0.84, 0.64) : ic < 2.5 ? vec3(0.85, 0.66, 0.55)
+                 : ic < 3.5 ? vec3(0.90, 0.88, 0.82) : ic < 4.5 ? vec3(0.80, 0.78, 0.74) : vec3(0.84, 0.76, 0.62);
+      col = mix(col, tinta, 0.78);
+    }
     col *= 0.94 + 0.12 * hsh(vec2(id, 0.3));
     col *= 0.96 + 0.08 * nz2(vUVc * 2.3 + id * 10.0);
+    // sporco: colature verticali (grana allungata) piu' forti in alto, umido che sale dal basso
+    col *= 0.93 + 0.07 * nz2(vec2(vUVc.x * 4.0 + id * 3.0, vUVc.y * 0.35));
+    col *= 1.0 - 0.18 * (1.0 - smoothstep(0.9, 2.2, vUVc.y));
+    // occlusione sotto la gronda (la fascia del cornicione resta chiara, sotto di essa l'ombra)
+    col *= 1.0 - 0.22 * (1.0 - smoothstep(0.35, 1.4, H - vUVc.y)) * step(0.35, H - vUVc.y);
     // zoccolo di pietra/cemento sotto i 0,9 m
     float zoc = 1.0 - smoothstep(0.85, 0.95, vUVc.y);
     col = mix(col, vec3(0.62, 0.60, 0.56) * (0.9 + 0.2 * nz2(vUVc * 6.0)), zoc * 0.9);
@@ -2227,7 +2247,10 @@ float nz2(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
   vec3 col = diffuseColor.rgb;
   float pend = 1.0 - smoothstep(0.97, 0.995, abs(vNyc));
   // tinta coccio piu' decisa, file di tegole (ogni ~38 cm di quota lungo la falda) con l'ombra di ciascuna
-  col = mix(col, col * vec3(1.0, 0.72, 0.56), 0.6);
+  col = mix(col, col * vec3(0.92, 0.62, 0.46), 0.7);                 // coccio invecchiato, meno salmone
+  col *= 0.84 + 0.16 * nz2(vWp.xz * 0.35);                              // chiazze larghe di invecchiamento
+  // licheni e muschio su qualche falda: patch grigio-verdi
+  col = mix(col, col * vec3(0.72, 0.82, 0.66) + vec3(0.06), 0.55 * smoothstep(0.58, 0.8, nz2(vWp.xz * 0.9 + 3.0)) * step(0.45, hsh(floor(vWp.xz / 6.0) + 1.0)));
   float filo = fract(vWp.y * 2.6 + nz2(vWp.xz * 1.3) * 0.06);
   float tegola = smoothstep(0.0, 0.18, filo) * (1.0 - smoothstep(0.62, 1.0, filo));
   float colonne = 0.9 + 0.1 * step(0.5, fract((vWp.x + vWp.z) * 3.0));
@@ -3311,7 +3334,15 @@ function buildTigli(){
 // ---------- chiesa di Santa Maria ad Nives (Meshy decimato, 80k tri) al posto della torre stilizzata ----------
 async function buildChiesaNives(loader){
   const g = await loadGLB(loader, 'assets/chiesa_nives.glb?' + VER, () => {});
-  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.95; } } });
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; if (o.material) {
+    o.material.metalness = 0; o.material.roughness = 0.95;
+    // la texture Meshy e' scura e satura, con le ombre "cotte" dentro: si schiarisce (gamma 0,78),
+    // si desatura un quarto e si scalda, per avvicinarla alla pietra chiara e agli intonaci del paese
+    o.material.customProgramCacheKey = () => 'nives';
+    o.material.onBeforeCompile = sh => { sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+{ vec3 c = pow(max(diffuseColor.rgb, 0.0), vec3(0.78)); float l = dot(c, vec3(0.299, 0.587, 0.114));
+  c = mix(c, vec3(l), 0.25) * vec3(1.30, 1.25, 1.14); diffuseColor.rgb = clamp(c, 0.0, 1.0); }`); };
+  } } });
   // via la torre + croce stilizzate di borghi.glb
   let px = -1375, pz = 4611;
   scene.traverse(o => { if (o.isMesh && (o.name === 'Borghi_8' || o.name === 'Borghi_9')) { o.visible = false; if (o.name === 'Borghi_8') { o.geometry.computeBoundingBox(); const c = o.geometry.boundingBox.getCenter(tmpC); o.localToWorld(c); px = c.x; pz = c.z; } } });
