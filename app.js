@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const VER = 'v81';
+const VER = 'v82';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -365,7 +365,7 @@ async function boot(){
   const h = location.hash.match(/km=([\d.]+)/);
   if (h) st.s = clamp(parseFloat(h[1]) * 1000, 0, TOT);
   else st.s = S0_ARCO;
-  applicaQualita(QUAL.liv); QUAL.avvio = performance.now();   // ora che alberi e nuvole esistono
+  applicaGrado(QUAL.grado); QUAL.avvio = performance.now(); avviaDiag();   // ora che alberi e nuvole esistono
   try { if (!TIDX) TIDX = buildTerrIndex(); correggiGriglia(); } catch (e) { console.warn('griglia:', e); }
   st.ready = true; prog(1);
   {
@@ -386,7 +386,7 @@ async function boot(){
   window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, cam: () => camera, ctrl: () => controls, lino: () => lino, terraV: (x, z, y) => terraVera(x, z, y),
                   look: (p, t) => { camera.position.set(p[0], p[1], p[2]); camTgt.set(t[0], t[1], t[2]); controls.target.copy(camTgt); controls.update(); },
                   y0arco: () => Y0_ARCO, pos: s => { posAt(s, tmpC); return [tmpC.x, tmpC.y, tmpC.z]; }, goto: km => { st.sTarget = clamp(km, 0, route.total_km) * 1000; },
-                  poi: i => openPoi(route.pois[i]), qual: l => applicaQualita(l), Q: QUAL, specie: n => cambiaSpecie(n), rigNow: () => RIG, cer: () => CER, ext: () => EXT_TILES, tickE: dt => tickExtTiles(dt), sent: () => ({ SENT, SENT_ON, sentT }), tickS: dt => tickSentieri(dt), rb: (n, ax, a) => rotBone(n, AX[ax], a), vetta: n => openPeak(route.peaks.find(p => new RegExp(n, 'i').test(p.n))), gara: showGara, segui: v => setFollow(v, false),
+                  poi: i => openPoi(route.pois[i]), qual: l => applicaQualita(l), grado: g => applicaGrado(g, 'prova'), guardia: dt => guardiaFps(dt), Q: QUAL, specie: n => cambiaSpecie(n), rigNow: () => RIG, cer: () => CER, ext: () => EXT_TILES, tickE: dt => tickExtTiles(dt), sent: () => ({ SENT, SENT_ON, sentT }), tickS: dt => tickSentieri(dt), rb: (n, ax, a) => rotBone(n, AX[ax], a), vetta: n => openPeak(route.peaks.find(p => new RegExp(n, 'i').test(p.n))), gara: showGara, segui: v => setFollow(v, false),
                   anim: () => action ? { t: +action.time.toFixed(3), ts: +mixer.timeScale.toFixed(2),
                                          dur: +action.getClip().duration.toFixed(2) } : null,
                   tracks: () => action ? action.getClip().tracks.map(t => t.name) : [],
@@ -434,8 +434,7 @@ function buildStage(){
   const fill = new THREE.DirectionalLight(0xffe7c8, 0.32);
   fill.position.set(5600, 4000, 4800);
   scene.add(hemi, sunLight, sunLight.target, fill);
-  const liv0 = qualIniziale();
-  QUAL.tetto = QUAL.tettoMax = QUAL.mob ? 2 : 3;
+  const liv0 = qualIniziale();   // imposta anche QUAL.mob, tetto e gradino di partenza
   // Ombre: la shadow map e' sempre abilitata nel renderer (costa nulla finche' nessuna luce proietta);
   // dimensione della mappa, tipo di filtro e inquadratura li regola applicaQualita / inquadraOmbre.
   // Dal livello 1 in su le ombre vere ci sono; al livello 0 resta l'ombra di contatto sotto i personaggi.
@@ -1723,31 +1722,56 @@ let ORTHO = null, HG = null, sunLight = null, SHADOWS = false, HEMI = null, SEVI
 // ombre, dettaglio ravvicinato del terreno, facciate, numero di alberi e nuvole, distanza della nebbia.
 const QUAL_U = { value: 2 };            // uniform condiviso dagli shader (terreno, case)
 const FOG_VOLO = [3800, 6500, 9500, 11500];   // nebbia in volo per livello: con l'anello esterno si vede lontano
-const QUAL = { liv: 2, tetto: 3, tettoMax: 3, mob: false, t: 0, n: 0, ok: 0, giu: 0, avvio: 0, res: 1, salva: 0 };
+const QUAL = { liv: 2, tetto: 3, tettoMax: 3, mob: false, t: 0, n: 0, ok: 0, lenti: 0, avvio: 0, res: 1, salva: 0,
+               grado: 0, cap30: false, frame: 0, hzMax: 0, hz: 60, tSu: -1e9, bloccoSu: 0, diag: null };
+// cadenza dello schermo misurata a vuoto, durante il caricamento (prima che la scena pesi): 30 Hz in
+// risparmio energetico o con il limite di Safari, 60 altrimenti. E' il riferimento della guardia.
+(function misuraHz(){
+  let n = 0; const t0 = performance.now();
+  const f = () => { n++; if (performance.now() - t0 < 1000) requestAnimationFrame(f); else QUAL.hzMax = Math.max(QUAL.hzMax, Math.min(n, 125)); };
+  requestAnimationFrame(f);
+})();
 const VEG_IM = [];                      // { im, n }: mesh istanziate della vegetazione
 // Mappa delle ombre per livello (lato in px): 0 = niente ombre vere (solo quelle di contatto).
 // Livello 0: la mappa resta (256 px) ma la camera delle ombre si chiude a un metro: nessun oggetto dentro,
 // nessuna ombra e quasi nessun costo, SENZA spegnere castShadow (spegnerlo ricompila tutti gli shader:
 // un blocco di 1-2 s con schermo nero a ogni cambio di livello).
 const OMBRA_PX = [256, 1024, 2048, 4096];
-const QKEY = 'srmx_q2';                 // livello raggiunto nelle sessioni precedenti (per dispositivo)
+const QKEY = 'srmx_q3';                 // gradino raggiunto a dispositivo "freddo" nelle sessioni precedenti
+// ---- scala della qualita' (v82) ----
+// Un solo indice, QUAL.grado, percorre una scala di gradini dal migliore (0) al piu' economico. Ogni gradino
+// fissa livello (ombre, vegetazione, nuvole, nebbia), risoluzione e cadenza. L'ordine e' quello della
+// visibilita' del taglio: prima cio' che non si nota (cadenza a 30 fps sul telefono, ombre meno fini),
+// per ultima la risoluzione, che non scende MAI sotto il 75% della base (sotto si vede la sgranatura).
+//   telefono:  0 pieno | 1 cadenza 30 | 2 res .92 | 3 res .85 | 4 liv-1 | 5 res .75 | 6 liv-2 | 7 liv-3
+//   pc:        0 pieno | 1 res .92 | 2 res .85 | 3 liv-1 | 4 res .75 | 5 liv-2 | 6 liv-3 | 7 cadenza 30
+function scalaQualita(){
+  const m = QUAL.mob;
+  return m ? [ { }, { cap: 1 }, { cap: 1, res: 0.92 }, { cap: 1, res: 0.85 }, { cap: 1, res: 0.85, dl: 1 },
+               { cap: 1, res: 0.75, dl: 1 }, { cap: 1, res: 0.75, dl: 2 }, { cap: 1, res: 0.75, dl: 3 } ]
+           : [ { }, { res: 0.92 }, { res: 0.85 }, { res: 0.85, dl: 1 }, { res: 0.75, dl: 1 },
+               { res: 0.75, dl: 2 }, { res: 0.75, dl: 3 }, { res: 0.75, dl: 3, cap: 1 } ];
+}
 function qualIniziale(){
-  const mob = /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
+  const mob = /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));   // iPadOS si finge Mac
   QUAL.mob = mob;
+  QUAL.tetto = QUAL.tettoMax = mob ? 2 : 3;
   const q = new URLSearchParams(location.search).get('q');
   if (q !== null && /^[0-3]$/.test(q)) { QUAL.lock = true; return +q; }      // ?q=0..3 per le prove (livello bloccato)
-  let l;
-  if (!mob) l = 3;
-  else {
-    const mem = navigator.deviceMemory || 4, cpu = navigator.hardwareConcurrency || 4;
-    l = (mem <= 3 || cpu <= 4) ? 0 : (mem <= 4 || cpu <= 6) ? 1 : 2;
-  }
-  // memoria della sessione precedente: si parte dal livello che il dispositivo ha davvero retto
-  try { const m = JSON.parse(localStorage.getItem(QKEY) || 'null'); if (m && m.ua === navigator.userAgent.length && typeof m.liv === 'number') l = clamp(m.liv, 0, 3); } catch (e) { /* storage bloccato */ }
-  return l;
+  // gradino di partenza: quello che il dispositivo ha retto a freddo l'ultima volta (memoria di 7 giorni),
+  // altrimenti il pieno per il suo tetto. Nessuna memoria dei cali termici: a telefono caldo si scende
+  // in sessione, ma la volta dopo si riparte puliti.
+  let g = 0;
+  try {
+    const m = JSON.parse(localStorage.getItem(QKEY) || 'null');
+    if (m && m.ua === navigator.userAgent.length && typeof m.grado === 'number' && Date.now() - (m.t || 0) < 7 * 86400e3) g = clamp(m.grado, 0, 7);
+  } catch (e) { /* storage bloccato */ }
+  QUAL.grado = g;
+  const sc = scalaQualita()[g];
+  return QUAL.tetto - (sc.dl || 0);
 }
 function salvaQualita(){
-  try { localStorage.setItem(QKEY, JSON.stringify({ liv: QUAL.liv, ua: navigator.userAgent.length, t: Date.now() })); } catch (e) { /* niente */ }
+  try { localStorage.setItem(QKEY, JSON.stringify({ grado: QUAL.grado, ua: navigator.userAgent.length, t: Date.now() })); } catch (e) { /* niente */ }
 }
 // inquadratura della camera delle ombre: un quadrato di lato 2*half (unita' di scena) centrato sul
 // bersaglio della luce. Piu' e' stretto, piu' l'ombra e' nitida: lo si stringe quando la camera e'
@@ -1764,12 +1788,24 @@ function inquadraOmbre(half){
   const px = sunLight.shadow.mapSize.x || 2048;
   sunLight.shadow.normalBias = clamp(2 * half / px * 1.6, 0.05, 0.6);
 }
+// applica un gradino della scala: livello, risoluzione, cadenza
+function applicaGrado(g, motivo){
+  const sc = scalaQualita();
+  g = clamp(g, 0, sc.length - 1);
+  QUAL.grado = g;
+  const s = sc[g];
+  QUAL.res = s.res || 1;
+  QUAL.cap30 = !!s.cap;
+  applicaQualita(QUAL.tetto - (s.dl || 0));
+  if (motivo) console.log('qualita\': gradino', g, '(' + motivo + ')');
+}
 function applicaQualita(l){
   l = clamp(l, 0, QUAL.tetto);
   QUAL.liv = l; QUAL_U.value = l;
   applicaRisoluzione();
   if (sunLight) {
-    const px = OMBRA_PX[l];
+    // in volo la camera e' alta e le ombre si vedono poco: mappa al massimo 1024 (meno riempimento per frame)
+    const px = FLY.on ? Math.min(OMBRA_PX[l], 1024) : OMBRA_PX[l];
     if (sunLight.shadow.mapSize.x !== px) {
       sunLight.shadow.mapSize.set(px, px);
       if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }   // si ricrea alla prossima resa
@@ -1777,14 +1813,16 @@ function applicaQualita(l){
     sunLight.castShadow = true;
     ombraHalf = -1; inquadraOmbre(430);
   }
-  const fr = [0.55, 0.8, 1, 1][l];
+  const fr = [0.55, 0.8, 1, 1][l] * (FLY.on && QUAL.mob ? 0.8 : 1);
   for (const v of VEG_IM) v.im.count = Math.max(1, Math.round(v.n * fr));
   for (let i = 0; i < NUVOLE.length; i++) NUVOLE[i].visible = l > 0 || i % 2 === 0;
+  // la flora minuta (cuscini, adonidi, genziane, sassi) da quota di volo non si distingue: fuori dalla scena
+  for (const im of IMPOSTORS) if (im.userData.piccola) { im.visible = !FLY.on; if (im.userData.rocce) im.userData.rocce.visible = !FLY.on; }
   if (scene && scene.fog) scene.fog.far = FLY.on ? FOG_VOLO[l] : (l === 0 ? 11000 : 18000);
-  console.log('qualita\':', ['essenziale', 'media', 'alta', 'massima'][l], 'risoluzione', QUAL.res.toFixed(2));
+  console.log('qualita\':', ['essenziale', 'media', 'alta', 'massima'][l], 'risoluzione', QUAL.res.toFixed(2), QUAL.cap30 ? '30 fps' : '');
 }
-// risoluzione di resa = pixel ratio del livello x fattore dinamico QUAL.res (0,6-1): e' la prima
-// leva che si muove, a piccoli passi, e non si nota
+// risoluzione di resa = pixel ratio di base x fattore QUAL.res (0,75-1). Sul telefono la base e' 2 (o il
+// dpr se minore): a 0,75 si resta a 1,5, cioe' sempre sopra il pixel fisico "retina" percepito.
 // Il cambio di pixel ratio ridimensiona il buffer del canvas, che resta NERO finche' non si disegna il
 // frame successivo: fatto in fondo al tick (dopo la resa) produceva un lampo nero a ogni passo della
 // risoluzione dinamica. Ora si prenota e si applica all'inizio del tick, subito prima di disegnare.
@@ -1793,38 +1831,70 @@ function applicaRisoluzione(subito){
   if (!subito) { QUAL.resPend = true; return; }
   QUAL.resPend = false;
   const dpr = devicePixelRatio || 1;
-  const base = [1, Math.min(dpr, 1.5), Math.min(dpr, 2), Math.min(dpr, 2)][QUAL.liv];
-  const pr = Math.max(0.5, base * QUAL.res);
+  const base = QUAL.mob ? Math.min(dpr, QUAL.liv === 0 ? 1.75 : 2) : [1, Math.min(dpr, 1.5), Math.min(dpr, 2), Math.min(dpr, 2)][QUAL.liv];
+  const pr = Math.max(0.75, base * QUAL.res);
   if (Math.abs(renderer.getPixelRatio() - pr) > 1e-3) renderer.setPixelRatio(pr);
 }
-// guardia prestazioni: finestre di 1 s sul dt reale (non su quello limitato del gioco).
-//  - sotto i 40 fps si abbassa prima la risoluzione (a passi del 5%, fino al 60%);
-//  - se anche al 60% si resta sotto i 27 fps per due finestre di fila si scende di livello;
-//  - sopra i 55 fps la risoluzione risale (3% a finestra); a risoluzione piena e > 55 fps per 8 finestre
-//    si risale di livello (fino al tetto del dispositivo): un intoppo momentaneo non costa nulla per sempre.
+// guardia prestazioni (v82): finestre di 1 s sul dt reale, giudicate RISPETTO ALLA CADENZA DELLO SCHERMO,
+// non in fps assoluti. La cadenza (30/60/90/120 Hz) si stima dal massimo osservato: un telefono che per
+// scelta consegna 30 fps (risparmio energetico, limite di Safari) non viene piu' scambiato per uno in affanno.
+//  - due finestre di fila sotto l'80% della cadenza utile -> un gradino piu' economico;
+//  - sei finestre di fila sopra il 95% -> un gradino migliore; se dopo una risalita si ricade entro 20 s,
+//    la risalita resta bloccata per due minuti (niente oscillazioni, niente ridimensionamenti continui);
+//  - il gradino si memorizza solo nei primi 90 s (capacita' del dispositivo a freddo), mai dopo: i cali
+//    termici di meta' sessione non devono rovinare l'apertura successiva.
 // Non si misura nei primi 10 s (compilazione degli shader) ne' mentre si caricano le tile esterne.
 function guardiaFps(dtReale){
   QUAL.t += dtReale; QUAL.n++;
   if (QUAL.t < 1) return;
   const fps = QUAL.n / QUAL.t; QUAL.t = 0; QUAL.n = 0;
-  if (QUAL.lock || performance.now() < QUAL.avvio + 10000) return;
+  const now = performance.now();
+  if (!QUAL.cap30 && fps > QUAL.hzMax) QUAL.hzMax = Math.min(fps, 125);   // a cadenza dimezzata non si stima lo schermo
+  QUAL.hz = QUAL.hzMax < 40 ? 30 : QUAL.hzMax < 75 ? 60 : QUAL.hzMax < 105 ? 90 : 120;
+  const utile = QUAL.cap30 ? QUAL.hz / 2 : QUAL.hz;
+  const r = fps / utile;
+  if (QUAL.diag) aggiornaDiag(fps, utile);
+  if (QUAL.lock || now < QUAL.avvio + 10000) return;
   if (typeof extLoading !== 'undefined' && extLoading) return;
   if (document.hidden) return;
-  // due finestre di fila sotto i 40 fps prima di scendere, quattro sopra i 55 prima di risalire:
-  // la risoluzione non deve oscillare (ogni cambio costa un ridimensionamento del buffer)
-  if (fps < 40) {
-    QUAL.ok = 0; QUAL.lenti = (QUAL.lenti || 0) + 1;
-    if (QUAL.lenti >= 2) {
+  const ultimo = scalaQualita().length - 1;
+  if (r < 0.8) {
+    QUAL.ok = 0;
+    if (++QUAL.lenti >= 2) {
       QUAL.lenti = 0;
-      if (QUAL.res > 0.6) { QUAL.res = Math.max(0.6, QUAL.res - 0.08); applicaRisoluzione(); QUAL.giu = 0; }
-      else if (fps < 27 && QUAL.liv > 0 && ++QUAL.giu >= 2) { QUAL.giu = 0; QUAL.res = 0.85; applicaQualita(QUAL.liv - 1); salvaQualita(); }
+      if (QUAL.grado < ultimo) {
+        if (now - QUAL.tSu < 20000) QUAL.bloccoSu = now + 120000;   // appena risaliti e gia' in affanno: fermi qui per un po'
+        applicaGrado(QUAL.grado + 1, 'affanno ' + fps.toFixed(0) + '/' + utile + ' fps');
+        if (now < QUAL.avvio + 90000) salvaQualita();
+      }
     }
-  } else if (fps > 55) {
-    QUAL.giu = 0; QUAL.lenti = 0;
-    if (QUAL.res < 1) { if (++QUAL.ok >= 4) { QUAL.ok = 0; QUAL.res = Math.min(1, QUAL.res + 0.08); applicaRisoluzione(); } }
-    else if (QUAL.liv < QUAL.tetto && ++QUAL.ok >= 8) { QUAL.ok = 0; applicaQualita(QUAL.liv + 1); salvaQualita(); }
-  } else { QUAL.giu = 0; QUAL.ok = 0; QUAL.lenti = 0; }
-  if (++QUAL.salva % 30 === 0) salvaQualita();
+  } else if (r > 0.95) {
+    QUAL.lenti = 0;
+    if (QUAL.grado > 0 && now > QUAL.bloccoSu && ++QUAL.ok >= 6) {
+      QUAL.ok = 0; QUAL.tSu = now;
+      applicaGrado(QUAL.grado - 1, 'margine ' + fps.toFixed(0) + '/' + utile + ' fps');
+      if (now < QUAL.avvio + 90000) salvaQualita();
+    }
+  } else { QUAL.ok = 0; QUAL.lenti = 0; }
+}
+// diagnostica a schermo (?diag=1): fps misurati / cadenza utile, risoluzione, gradino, livello, draw call,
+// triangoli, minuti di sessione. Serve a leggere i numeri dal telefono quando la qualita' cala.
+function aggiornaDiag(fps, utile){
+  const d = QUAL.diag, inf = renderer.info.render, pr = renderer.getPixelRatio();
+  const mins = (performance.now() - QUAL.avvio) / 60000;
+  const tri = inf.triangles > 1e6 ? (inf.triangles / 1e6).toFixed(2) + 'M' : (inf.triangles / 1e3).toFixed(0) + 'k';
+  d.textContent = 'fps ' + fps.toFixed(0) + '/' + utile + (QUAL.cap30 ? ' (30)' : '') + ' · schermo ' + QUAL.hz + ' Hz'
+    + '\nres ' + QUAL.res.toFixed(2) + ' · pr ' + pr.toFixed(2) + ' · ' + renderer.domElement.width + '×' + renderer.domElement.height
+    + '\ngradino ' + QUAL.grado + ' · liv ' + QUAL.liv + '/' + QUAL.tetto + ' · ombre ' + (sunLight ? sunLight.shadow.mapSize.x : '-')
+    + '\ndraw ' + inf.calls + ' · tri ' + tri + ' · ' + (FLY.on ? 'volo' : 'lino')
+    + '\n' + mins.toFixed(1) + ' min · ' + (QUAL.mob ? 'mobile' : 'pc') + ' dpr ' + (devicePixelRatio || 1).toFixed(2);
+}
+function avviaDiag(){
+  if (!/[?&]diag=1/.test(location.search)) return;
+  const d = document.createElement('pre');
+  d.id = 'diag';
+  d.style.cssText = 'position:fixed;right:8px;top:64px;z-index:99;margin:0;padding:6px 8px;background:rgba(0,0,0,.55);color:#9f9;font:11px/1.35 ui-monospace,Menlo,monospace;border-radius:6px;pointer-events:none;white-space:pre';
+  document.body.appendChild(d); QUAL.diag = d;
 }
 const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
 const OC = [0, 0, 0];
@@ -2915,7 +2985,7 @@ function buildImpostor(cfg){
     M.compose(P, Q, S); im.setMatrixAt(i, M);
   });
   im.instanceMatrix.needsUpdate = true; im.castShadow = cfg.ombra !== false; im.frustumCulled = false; im.name = cfg.nome;
-  im.userData.posti = posti; im.userData.scheda = cfg.scheda;
+  im.userData.posti = posti; im.userData.scheda = cfg.scheda; im.userData.piccola = !!cfg.piccola;
   scene.add(im);
   IMPOSTORS.push(im);
   return im;
@@ -3042,7 +3112,7 @@ function buildPiantaLowPoly(cfg){
   const rnd = rngDa(cfg.seme), posti = cfg.posti || [], rocce = [];
   for (const z of (cfg.zone || [])) for (let k = 0; k < z.n; k++) {
     const sS = z.a + rnd() * (z.b - z.a);
-    const lato = rnd() < 0.5 ? -1 : 1, dist = z.d0 + rnd() * (z.d1 - z.d0);
+    const lato = z.lato || (rnd() < 0.5 ? -1 : 1), dist = z.d0 + rnd() * (z.d1 - z.d0);   // z.lato: -1 sinistra / +1 destra (nel verso di gara)
     posAt(sS, tmpA); tanAt(sS, tmpB);
     const cx = tmpA.x - tmpB.z * dist * K * lato, cz = tmpA.z + tmpB.x * dist * K * lato;
     // colonie: attorno al punto, da grp[0] a grp[1] piante entro cfg.rGrp metri
@@ -3093,7 +3163,7 @@ function buildPiantaLowPoly(cfg){
   });
   im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
   im.castShadow = cfg.ombra !== false; im.receiveShadow = true; im.frustumCulled = false; im.name = cfg.nome;
-  im.userData.posti = posti; im.userData.scheda = cfg.scheda;
+  im.userData.posti = posti; im.userData.scheda = cfg.scheda; im.userData.piccola = !!cfg.piccola;
   scene.add(im); IMPOSTORS.push(im);
   if (rocce.length) {
     const rm = new THREE.InstancedMesh(geoRoccia(cfg.seme + 7), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, flatShading: true }), rocce.length);
@@ -3104,9 +3174,9 @@ function buildPiantaLowPoly(cfg){
   return im;
 }
 function buildGenziane(){
-  buildImpostor({ nome: 'Genziane', file: 'genziana.png', layout: 'colonne', hReale: 1.4, aspetto: 0.5, seme: 19702,
+  buildImpostor({ nome: 'Genziane', file: 'genziana.png', piccola: true, layout: 'colonne', hReale: 1.4, aspetto: 0.5, seme: 19702,
     zone: [{ a: 19700, b: 21000, n: 22, d0: 4, d1: 18 }], scheda: schedaGenziana });
-  buildImpostor({ nome: 'Adonidi', file: 'adonide.png', layout: 'righe', hReale: 0.38, aspetto: 1.85, seme: 14201, vento: 0.03,
+  buildImpostor({ nome: 'Adonidi', file: 'adonide.png', piccola: true, layout: 'righe', hReale: 0.38, aspetto: 1.85, seme: 14201, vento: 0.03,
     zone: [{ a: 14200, b: 14620, n: 14, d0: 1.5, d1: 6 }, { a: 17300, b: 18400, n: 22, d0: 2, d1: 9 }], scheda: schedaAdonide });
   // Pioppo tremulo in veste d'autunno (giallo): boscaglie umide nelle conche fresche. Il tracciato
   // scende in una conca a ~930 m fra il km 6,3 e il km 7 (la quota piu' bassa della salita) e ne
@@ -3119,12 +3189,22 @@ function buildGenziane(){
     zone: [{ a: 22200, b: 23300, n: 4, d0: 8, d1: 22, grp: [2, 3] }, { a: 9700, b: 10400, n: 2, d0: 10, d1: 24, grp: [1, 2] }], rGrp: 4, scheda: schedaPioppo });
   else buildImpostor({ nome: 'Pioppi', file: 'pioppo.webp', layout: 'colonne', hReale: 12, aspetto: 0.67, seme: 6401, vento: 0.25, sc0: 0.85, sc1: 0.35, luce: 0.45,
     zone: [{ a: 6350, b: 7000, n: 3, d0: 9, d1: 22 }, { a: 24600, b: 25000, n: 2, d0: 10, d1: 20 }], scheda: schedaPioppo });
-  // Silene acaulis: cuscinetti nei pavimenti calcarei della cresta Sevice-Cafornia (km 15-18,6).
+  // Silene acaulis ssp. cenisia: Piano di gestione RNO M. Velino, unita' SS (Saxifrago speciosae-Silenetum
+  // cenisiae, habitat 8240*): SOLO zona sommitale (vette di Velino, Cafornia, Sevice e creste fra esse),
+  // fascia 2.100-2.480 m, pendii debolmente inclinati esposti a NW, copertura 10-40%, "presente solo in
+  // cinque biotopi relitti". Qui dunque cinque biotopi, uno per tratto di cresta sopra i 2.240 m, ognuno
+  // di 1-2 blocchi rocciosi con 3-6 cuscini, sempre sul lato NW del tracciato (verso di gara):
+  //   km 15,55-15,70  2.245-2.270 m  versante di M. di Sevice      lato destro
+  //   km 16,55-16,65  ~2.300 m       cresta Sevice-Velino           lato destro
+  //   km 17,05-17,15  ~2.365 m       spalla del Velino              lato sinistro
+  //   km 18,15-18,25  2.385 m        cresta Velino-Cafornia (tetto) lato destro
+  //   km 19,00-19,15  2.265-2.285 m  verso M. Cafornia              lato sinistro
   // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
   try { buildSassiCresta(); } catch (e) { console.warn('sassi cresta:', e); }
-  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, roccia: true, ombra: false, sc0: 0.5, sc1: 0.55, affonda: -0.03, rGrp: 1.1,
-    zone: [{ a: 15100, b: 16400, n: 16, d0: 1.0, d1: 4.5, grp: [2, 5] }, { a: 16400, b: 18600, n: 24, d0: 1.0, d1: 5, grp: [2, 5] }, { a: 18600, b: 20200, n: 12, d0: 1.0, d1: 5, grp: [2, 4] }], scheda: schedaSilene });
-  else buildImpostor({ nome: 'Silene', file: 'silene.webp', layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
+  const bioSS = (a, b, lato, n) => ({ a, b, n, d0: 1.2, d1: 4.5, grp: [3, 6], lato });
+  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, roccia: true, ombra: false, piccola: true, sc0: 0.5, sc1: 0.55, affonda: -0.03, rGrp: 1.1,
+    zone: [bioSS(15550, 15700, 1, 2), bioSS(16550, 16650, 1, 1), bioSS(17050, 17150, -1, 2), bioSS(18150, 18250, 1, 1), bioSS(19000, 19150, -1, 2)], scheda: schedaSilene });
+  else buildImpostor({ nome: 'Silene', file: 'silene.webp', piccola: true, layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
     zone: [{ a: 15100, b: 16400, n: 18, d0: 1.2, d1: 4.5 }, { a: 16400, b: 18600, n: 24, d0: 1.2, d1: 5 }], scheda: schedaSilene });
 }
 function schedaPioppo(sS){
@@ -3845,6 +3925,7 @@ function flyStart(){
   if (RIG && RIG.sp.terra) cervoInizio(false);
   if (!FLY.fogSaved) FLY.fogSaved = [scene.fog.near, scene.fog.far];
   scene.fog.near = 700; scene.fog.far = FOG_VOLO[QUAL.liv];
+  applicaQualita(QUAL.liv);   // ombre 1024, flora minuta nascosta, nebbia di volo
   luceGrifone(true);
   document.body.classList.add('grif');
   document.body.classList.toggle('touch', isTouch());
@@ -3871,6 +3952,7 @@ function flyStop(){
   if (FLY.mode === 'tour') { $('b-tour').classList.remove('on'); document.body.classList.remove('tour'); }
   FLY.mode = 'volo'; grifP.visible = false; skirt.visible = false; if (OMBRA_C) OMBRA_C.visible = false;
   if (FLY.fogSaved) { scene.fog.near = FLY.fogSaved[0]; scene.fog.far = QUAL.liv === 0 ? 11000 : FLY.fogSaved[1]; FLY.fogSaved = null; }
+  applicaQualita(QUAL.liv);   // ombre piene, flora minuta di nuovo in scena
   $('fade').style.opacity = 0; $('impatto').classList.remove('on');
   camera.fov = 55; camera.updateProjectionMatrix();
   luceGrifone(false);
@@ -4943,6 +5025,9 @@ function tiltOff(){
 
 // ---------- ciclo ----------
 function tick(){
+  // cadenza dimezzata (gradino economico sul telefono): un frame si', uno no. Il dt si accumula da solo
+  // nel clock, cosi' movimento e animazioni vanno alla stessa velocita' reale.
+  if (QUAL.cap30 && (++QUAL.frame & 1)) return;
   const dtReale = clock.getDelta();
   const dt = Math.min(dtReale, 0.05);
   if (QUAL.resPend) applicaRisoluzione(true);   // ridimensiona il buffer e lo ridisegna nello stesso giro
