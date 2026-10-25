@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const VER = 'v83';
+const VER = 'v84';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -47,23 +47,24 @@ const VMAX = 175, ACC = 240, VTELE = 3600;
 // glb: ~700 KB l'uno (12k tris, texture webp 1024, draco), caricato solo se scelto, al VAI.
 const AVATARS = [
   { id: 'lino', nome: 'Lino', breve: 'LINO', attivo: true, giro: 'lino_giro', tags: [
-      ['FACCIA DA SINDACO', 'ricorda qualcuno', 0.50, 0.13, 1],
-      ['FISICO ATLETICO', 'o quasi', 0.44, 0.40, -1],
-      ['SCARPE TECNICHE', 'collaudate sul brecciato', 0.52, 0.90, 1],
-      ['MATERIALE OBBLIGATORIO', 'occhio che lo controlliamo', 0.64, 0.56, 1],
-      ['GAMBE DA 2.109 M D+', 'garanzia 29,7 km', 0.44, 0.73, -1],
-      ['SGUARDO FISSO SUL VELINO', 'o sul primo ristoro?', 0.54, 0.16, -1],
-      ['ZAINO LEGGERO', 'con tanta acqua e sali', 0.40, 0.35, 1] ] },
-  { id: 'vincitore', nome: 'Vincitore<br>SRM 2026', breve: 'CARLO', attivo: true, glb: 'vincitore.glb', giro: 'vincitore_giro',
+      ['FACCIA DA SINDACO', 'ricorda qualcuno', 0.50, 0.13],
+      ['SCARPE TECNICHE', 'collaudate sul brecciato', 0.52, 0.90],
+      ['MATERIALE OBBLIGATORIO', 'occhio che lo controlliamo', 0.64, 0.56],
+      ['GAMBE DA 2.109 M D+', 'garanzia 29,7 km', 0.44, 0.73],
+      ['ZAINO LEGGERO', 'con tanta acqua e sali', 0.40, 0.35] ] },
+  // dati di gara: classifica SRM 2026 (cronometraggio) e classifica finale Abruzzo Trail Run Series 2026
+  { id: 'vincitore', nome: 'Vincitore<br>SRM 2026', breve: 'CARLO', attivo: true, glb: 'vincitore.glb', giro: 'vincitore_giro', rotY: Math.PI / 2,
     titolo: 'VINCITORE SRM 2026', sotto: 'Carlo Silvagni · 3h 28’ 31”', tags: [
-      ['PETTORALE 169', 'Sporting Club USA Avezzano', 0.50, 0.42, 1],
-      ['3H 28’ 31”', 'primo assoluto della SRM 2026', 0.52, 0.14, -1],
-      ['6’57” AL KM', 'con 2.079 m di salita', 0.46, 0.78, -1] ] },
-  { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', breve: 'FEDERICA', attivo: true, glb: 'vincitrice.glb', giro: 'vincitrice_giro',
+      ['PETTORALE 169', 'Skyrace del Maglio 2026', 0.50, 0.42],
+      ['1° ASSOLUTO', '3h 28’ 31” · 6’57” al km', 0.50, 0.14],
+      ['+4’ 42” SUL SECONDO', 'Domenico Volpe', 0.50, 0.60],
+      ['1° ATRS 2026', 'Abruzzo Trail Run Series, generale', 0.50, 0.82] ] },
+  { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', breve: 'FEDERICA', attivo: true, glb: 'vincitrice.glb', giro: 'vincitrice_giro', rotY: Math.PI / 2,
     titolo: 'VINCITRICE SRM 2026', sotto: 'Federica Pelosi · 4h 03’ 55”', tags: [
-      ['PETTORALE 181', 'Top Trail', 0.50, 0.42, -1],
-      ['4H 03’ 55”', 'prima assoluta della SRM 2026', 0.52, 0.14, 1],
-      ['IN CRESTA', 'la foto della home del sito', 0.46, 0.78, 1] ] }
+      ['PETTORALE 181', 'Skyrace del Maglio 2026', 0.50, 0.42],
+      ['1ª ASSOLUTA', '4h 03’ 55” · 8’08” al km', 0.50, 0.14],
+      ['+7’ 16” SULLA SECONDA', 'Malgorzata Burkiewicz', 0.50, 0.60],
+      ['1ª ATRS 2026', 'Abruzzo Trail Run Series, generale', 0.50, 0.82] ] }
 ];
 const nomeAvatar = () => (AVATARS.find(a => a.id === st.avatar) || AVATARS[0]).breve;
 // Carosello: Lino al centro (come sempre), due frecce ai lati. A destra il Vincitore, a sinistra la
@@ -102,6 +103,7 @@ async function caricaAvatar(id){
   const lg = await loadGLB(LOADER, 'assets/' + av.glb + '?' + VER, () => {});
   if (lino) scene.remove(lino);
   mixer = null; action = null; LINOACT = null; LINOPOLI = []; LINO2 = true;
+  if (av.rotY) lg.scene.rotation.y = av.rotY;   // i Meshy guardano +z: Lino avanza lungo +x
   prepLino(lg);
   if (st.view === 'fpv' && lino) lino.visible = false;
   const seg = $('b-seg'); if (seg) seg.textContent = 'SEGUI ' + av.breve;
@@ -149,14 +151,20 @@ function loaderShow(){
     const ax = ix + t[2] * W, ay = t[3] * H;
     chip.innerHTML = '<b>' + t[0] + '</b><br>' + t[1];
     chip.style.opacity = 0;
-    chip.style.left = ''; chip.style.right = '';
-    if (t[4] > 0) chip.style.right = '0px'; else chip.style.left = '0px';
-    chip.style.top = Math.max(0, Math.min(bh - 64, ay - 26)) + 'px';
+    // targhette sempre a destra, nella colonna libera fra il personaggio e il bordo (mai sopra la figura),
+    // all'altezza del punto indicato ma fuori dalla fascia della freccia del carosello
+    chip.style.left = ''; chip.style.right = '0px';
+    chip.style.maxWidth = Math.max(56, Math.floor((bw - W) / 2) - 6) + 'px';
+    let top = ay - 18;
+    const ar = $('av-next') ? $('av-next').getBoundingClientRect() : null, br0 = box.getBoundingClientRect();
+    const fA = ar ? ar.top - br0.top - 4 : bh / 2 - 26, fB = ar ? ar.bottom - br0.top + 2 : bh / 2 + 24;   // fascia della freccia
+    if (top + 40 > fA && top < fB) top = (ay < (fA + fB) / 2) ? fA - 42 : fB + 2;
+    chip.style.top = Math.max(0, Math.min(bh - 44, top)) + 'px';
     requestAnimationFrame(() => {
       chip.style.opacity = 1;
       const cr = chip.getBoundingClientRect(), br = box.getBoundingClientRect();
       if (br.width < 4) return;
-      const cx2 = t[4] > 0 ? (cr.left - br.left - 3) : (cr.right - br.left + 3);
+      const cx2 = cr.left - br.left - 3;
       const cy2 = cr.top - br.top + cr.height / 2;
       svg.setAttribute('viewBox', '0 0 ' + bw + ' ' + bh);
       // la linea si ferma PRIMA del personaggio e finisce con una punta di
