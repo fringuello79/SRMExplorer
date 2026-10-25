@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const VER = 'v82';
+const VER = 'v83';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -41,18 +41,35 @@ const st = {
 const VMAX = 175, ACC = 240, VTELE = 3600;
 // ---------- scelta del personaggio (nel loader, prima di partire) ----------
 // Lino e' sempre il primo e l'unico attivo. Vincitore e vincitrice della SRM 2026 compaiono come
-// sagome con il punto interrogativo finche' non ci sono modello e liberatoria: per attivarli basta
-// mettere attivo: true e indicare il glb (stesso scheletro Mixamo di lino2.glb, stesse tre clip).
-// La scelta vale per la singola esplorazione: a ogni nuovo ingresso si sceglie di nuovo.
+// I tre personaggi della scelta iniziale. I vincitori della SRM 2026 (18 ottobre) sono modelli Meshy
+// riggati Mixamo (stesso scheletro di lino2.glb, clip Walking + Running; niente "charge": lo sprint
+// accelera la corsa). La scelta vale per la singola esplorazione: a ogni nuovo ingresso si sceglie di nuovo.
+// glb: ~700 KB l'uno (12k tris, texture webp 1024, draco), caricato solo se scelto, al VAI.
 const AVATARS = [
-  { id: 'lino', nome: 'Lino', attivo: true },
-  { id: 'vincitore', nome: 'Vincitore<br>SRM 2026', attivo: false, nota: 'si svela dopo il 18 ottobre' },
-  { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', attivo: false, nota: 'si svela dopo il 18 ottobre' }
+  { id: 'lino', nome: 'Lino', breve: 'LINO', attivo: true, giro: 'lino_giro', tags: [
+      ['FACCIA DA SINDACO', 'ricorda qualcuno', 0.50, 0.13, 1],
+      ['FISICO ATLETICO', 'o quasi', 0.44, 0.40, -1],
+      ['SCARPE TECNICHE', 'collaudate sul brecciato', 0.52, 0.90, 1],
+      ['MATERIALE OBBLIGATORIO', 'occhio che lo controlliamo', 0.64, 0.56, 1],
+      ['GAMBE DA 2.109 M D+', 'garanzia 29,7 km', 0.44, 0.73, -1],
+      ['SGUARDO FISSO SUL VELINO', 'o sul primo ristoro?', 0.54, 0.16, -1],
+      ['ZAINO LEGGERO', 'con tanta acqua e sali', 0.40, 0.35, 1] ] },
+  { id: 'vincitore', nome: 'Vincitore<br>SRM 2026', breve: 'CARLO', attivo: true, glb: 'vincitore.glb', giro: 'vincitore_giro',
+    titolo: 'VINCITORE SRM 2026', sotto: 'Carlo Silvagni · 3h 28’ 31”', tags: [
+      ['PETTORALE 169', 'Sporting Club USA Avezzano', 0.50, 0.42, 1],
+      ['3H 28’ 31”', 'primo assoluto della SRM 2026', 0.52, 0.14, -1],
+      ['6’57” AL KM', 'con 2.079 m di salita', 0.46, 0.78, -1] ] },
+  { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', breve: 'FEDERICA', attivo: true, glb: 'vincitrice.glb', giro: 'vincitrice_giro',
+    titolo: 'VINCITRICE SRM 2026', sotto: 'Federica Pelosi · 4h 03’ 55”', tags: [
+      ['PETTORALE 181', 'Top Trail', 0.50, 0.42, -1],
+      ['4H 03’ 55”', 'prima assoluta della SRM 2026', 0.52, 0.14, 1],
+      ['IN CRESTA', 'la foto della home del sito', 0.46, 0.78, 1] ] }
 ];
-// Carosello: Lino al centro (come sempre), due frecce ai lati. A destra "Vincitore SRM 2026", a sinistra
-// "Vincitrice SRM 2026": finche' non sono attivi si vede una sagoma fantasma con il punto interrogativo
-// e il pulsante VAI resta spento; si torna su Lino con le frecce (o con le frecce della tastiera).
-let AV_IDX = 0;
+const nomeAvatar = () => (AVATARS.find(a => a.id === st.avatar) || AVATARS[0]).breve;
+// Carosello: Lino al centro (come sempre), due frecce ai lati. A destra il Vincitore, a sinistra la
+// Vincitrice (giradischi e targhette loro); un personaggio non attivo mostra la sagoma con il "?" e il
+// pulsante VAI spento. Si gira con le frecce (anche quelle della tastiera).
+let AV_IDX = 0, NOME_H = 50;
 function buildAvatarPicker(){
   const prev = $('av-prev'), next = $('av-next'); if (!prev || !next) return;
   prev.classList.add('on'); next.classList.add('on');
@@ -65,15 +82,30 @@ function buildAvatarPicker(){
 }
 function mostraAvatar(i){
   const n = AVATARS.length; AV_IDX = ((i % n) + n) % n;
-  const av = AVATARS[AV_IDX], ghost = $('av-ghost'), nome = $('lino-nome'), spin = $('spin-img'), svg = $('spin-svg'), chip = $('spin-chip'), go = $('go-btn');
-  const lino = av.id === 'lino';
-  if (ghost) { ghost.classList.toggle('on', !lino); if (!lino) { $('av-lab').textContent = av.nome.replace('<br>', ' '); $('av-nota').textContent = av.nota || ''; } }
-  if (nome) nome.style.visibility = lino ? 'visible' : 'hidden';
-  if (spin) spin.style.visibility = lino ? 'visible' : 'hidden';
-  if (svg) svg.style.visibility = lino ? 'visible' : 'hidden';
-  if (chip) chip.style.visibility = lino ? 'visible' : 'hidden';
+  const av = AVATARS[AV_IDX], ghost = $('av-ghost'), nome = $('lino-nome'), tit = $('av-titolo'), spin = $('spin-img'), svg = $('spin-svg'), chip = $('spin-chip'), go = $('go-btn');
+  const lino = av.id === 'lino', vivo = !!(av.attivo && av.giro);
+  if (ghost) { ghost.classList.toggle('on', !vivo); if (!vivo) { $('av-lab').textContent = av.nome.replace('<br>', ' '); $('av-nota').textContent = av.nota || ''; } }
+  if (nome) { if (nome.offsetHeight > 10) NOME_H = nome.offsetHeight; nome.style.display = lino ? 'block' : 'none'; }   // il titolo del vincitore prende lo stesso spazio: Lino non si sposta
+  if (tit) { tit.style.height = NOME_H + 'px'; tit.classList.toggle('on', vivo && !lino); if (av.titolo) { tit.querySelector('b').textContent = av.titolo; tit.querySelector('span').textContent = av.sotto || ''; } }
+  if (spin) spin.style.visibility = vivo ? 'visible' : 'hidden';
+  if (svg) svg.style.visibility = vivo ? 'visible' : 'hidden';
+  if (chip) chip.style.visibility = vivo ? 'visible' : 'hidden';
   if (go) { go.classList.toggle('spento', !av.attivo); go.disabled = !av.attivo; go.textContent = av.attivo ? 'VAI AL PERCORSO' : 'NON ANCORA DISPONIBILE'; }
   if (av.attivo) st.avatar = av.id;
+  if (vivo && window._loaderAvatar) window._loaderAvatar(av);
+}
+// carica il glb del personaggio scelto (se non e' Lino) e lo mette al posto di Lino: stesso gruppo,
+// stesso mixer, stesse clip per nome (walk/run). Se fallisce si resta con Lino.
+async function caricaAvatar(id){
+  const av = AVATARS.find(a => a.id === id);
+  if (!av || !av.glb || !LOADER) return false;
+  const lg = await loadGLB(LOADER, 'assets/' + av.glb + '?' + VER, () => {});
+  if (lino) scene.remove(lino);
+  mixer = null; action = null; LINOACT = null; LINOPOLI = []; LINO2 = true;
+  prepLino(lg);
+  if (st.view === 'fpv' && lino) lino.visible = false;
+  const seg = $('b-seg'); if (seg) seg.textContent = 'SEGUI ' + av.breve;
+  return true;
 }
 
 let route, N, TOT, renderer, scene, camera, controls, clock;
@@ -89,71 +121,83 @@ window.addEventListener('error', e => { if (!st.ready) fail('Errore: ' + (e.mess
 const prog = f => { $('load-bar').style.width = Math.round(f * 100) + '%'; };
 
 window._loaderShow = loaderShow;
+// giradischi del loader: una sprite (24 fotogrammi 360x480, 6 colonne) per personaggio, caricata quando
+// serve; le targhette con la freccia sono quelle del personaggio mostrato
+const GIRI = {};
+function caricaGiro(av){
+  if (!av.giro || GIRI[av.id]) return;
+  const g = GIRI[av.id] = { m: null, img: null, tags: av.tags || [] };
+  fetch('assets/' + av.giro + '.json?' + VER).then(r => r.ok ? r.json() : null).then(m => {
+    if (!m) return;
+    const img = new Image();
+    img.onload = () => { g.m = m; g.img = img; if (window._loaderAvatar && GIRO_CUR === av.id) window._loaderAvatar(av, true); };
+    img.src = 'assets/' + av.giro + '.webp?' + VER;
+  }).catch(() => {});
+}
+let GIRO_CUR = 'lino';
 function loaderShow(){
   LOADT0 = performance.now();
   const box = $('spinbox'); if (!box) return;
-  const img = new Image();
-  let timer = null, chipT = null;
-  fetch('assets/lino_giro.json?' + VER).then(r => r.ok ? r.json() : null).then(m => {
-    if (!m) return;
-    img.onload = () => {
-      const el = $('spin-img'), W = 240, H = 320;
-      el.style.display = 'block';
-      el.style.backgroundImage = 'url(' + img.src + ')';
-      el.style.backgroundSize = (m.cols * W) + 'px ' + (Math.ceil(m.n / m.cols) * H) + 'px';
-      let frame = 0;
-      timer = setInterval(() => {
-        frame = (frame + 1) % m.n;
-        el.style.backgroundPosition = (-(frame % m.cols) * W) + 'px ' + (-Math.floor(frame / m.cols) * H) + 'px';
-      }, 80);
-      const tags = [
-        ['FACCIA DA SINDACO', 'ricorda qualcuno', 0.50, 0.13, 1],
-        ['FISICO ATLETICO', 'o quasi', 0.44, 0.40, -1],
-        ['SCARPE TECNICHE', 'collaudate sul brecciato', 0.52, 0.90, 1],
-        ['MATERIALE OBBLIGATORIO', 'occhio che lo controlliamo', 0.64, 0.56, 1],
-        ['GAMBE DA 2.109 M D+', 'garanzia 29,7 km', 0.44, 0.73, -1],
-        ['SGUARDO FISSO SUL VELINO', 'o sul primo ristoro?', 0.54, 0.16, -1],
-        ['ZAINO LEGGERO', 'con tanta acqua e sali', 0.40, 0.35, 1],
-      ];
-      let ti = Math.floor(Math.random() * tags.length);
-      const chip = $('spin-chip'), svg = $('spin-svg');
-      const show = () => {
-        const t = tags[ti]; ti = (ti + 1) % tags.length;
-        const bw = box.clientWidth, bh = box.clientHeight;
-        const ix = bw / 2 - W / 2;
-        const ax = ix + t[2] * W, ay = t[3] * H;
-        chip.innerHTML = '<b>' + t[0] + '</b><br>' + t[1];
-        chip.style.opacity = 0;
-        chip.style.left = ''; chip.style.right = '';
-        if (t[4] > 0) chip.style.right = '0px'; else chip.style.left = '0px';
-        chip.style.top = Math.max(0, Math.min(bh - 64, ay - 26)) + 'px';
-        requestAnimationFrame(() => {
-          chip.style.opacity = 1;
-          const cr = chip.getBoundingClientRect(), br = box.getBoundingClientRect();
-          if (br.width < 4) return;
-          const cx2 = t[4] > 0 ? (cr.left - br.left - 3) : (cr.right - br.left + 3);
-          const cy2 = cr.top - br.top + cr.height / 2;
-          svg.setAttribute('viewBox', '0 0 ' + bw + ' ' + bh);
-          // la linea si ferma PRIMA di Lino e finisce con una punta di
-          // freccia (un po' irregolare) che indica il punto senza coprirlo
-          const dx = ax - cx2, dy = ay - cy2, dl = Math.hypot(dx, dy) || 1;
-          const G = Math.min(30, dl * 0.4);
-          const ux = dx / dl, uy = dy / dl, px = -uy, py = ux;
-          const tx = ax - ux * G, ty = ay - uy * G;          // punta
-          const ex = tx - ux * 9, ey = ty - uy * 9;          // fine linea
-          const p1x = tx - ux * 11.5 + px * 5.2, p1y = ty - uy * 11.5 + py * 5.2;
-          const p2x = tx - ux * 8.5 - px * 4.0, p2y = ty - uy * 8.5 - py * 4.0;
-          svg.innerHTML = '<line x1="' + cx2 + '" y1="' + cy2 + '" x2="' + ex.toFixed(1) + '" y2="' + ey.toFixed(1) +
-            '" stroke="#f4951f" stroke-width="2.2" opacity="0.92"/>' +
-            '<polygon points="' + tx.toFixed(1) + ',' + ty.toFixed(1) + ' ' + p1x.toFixed(1) + ',' + p1y.toFixed(1) +
-            ' ' + p2x.toFixed(1) + ',' + p2y.toFixed(1) + '" fill="#f4951f" opacity="0.95"/>';
-        });
-      };
-      show();
-      chipT = setInterval(show, 2600);
-    };
-    img.src = 'assets/lino_giro.webp?' + VER;
-  }).catch(() => {});
+  const el = $('spin-img'), chip = $('spin-chip'), svg = $('spin-svg'), W = 240, H = 320;
+  let timer = null, chipT = null, frame = 0, ti = 0;
+  const show = () => {
+    const g = GIRI[GIRO_CUR]; if (!g || !g.m || !g.tags.length) { chip.style.opacity = 0; svg.innerHTML = ''; return; }
+    const tags = g.tags; ti = ti % tags.length;
+    const t = tags[ti]; ti = (ti + 1) % tags.length;
+    const bw = box.clientWidth, bh = box.clientHeight;
+    const ix = bw / 2 - W / 2;
+    const ax = ix + t[2] * W, ay = t[3] * H;
+    chip.innerHTML = '<b>' + t[0] + '</b><br>' + t[1];
+    chip.style.opacity = 0;
+    chip.style.left = ''; chip.style.right = '';
+    if (t[4] > 0) chip.style.right = '0px'; else chip.style.left = '0px';
+    chip.style.top = Math.max(0, Math.min(bh - 64, ay - 26)) + 'px';
+    requestAnimationFrame(() => {
+      chip.style.opacity = 1;
+      const cr = chip.getBoundingClientRect(), br = box.getBoundingClientRect();
+      if (br.width < 4) return;
+      const cx2 = t[4] > 0 ? (cr.left - br.left - 3) : (cr.right - br.left + 3);
+      const cy2 = cr.top - br.top + cr.height / 2;
+      svg.setAttribute('viewBox', '0 0 ' + bw + ' ' + bh);
+      // la linea si ferma PRIMA del personaggio e finisce con una punta di
+      // freccia (un po' irregolare) che indica il punto senza coprirlo
+      const dx = ax - cx2, dy = ay - cy2, dl = Math.hypot(dx, dy) || 1;
+      const G = Math.min(30, dl * 0.4);
+      const ux = dx / dl, uy = dy / dl, px = -uy, py = ux;
+      const tx = ax - ux * G, ty = ay - uy * G;          // punta
+      const ex = tx - ux * 9, ey = ty - uy * 9;          // fine linea
+      const p1x = tx - ux * 11.5 + px * 5.2, p1y = ty - uy * 11.5 + py * 5.2;
+      const p2x = tx - ux * 8.5 - px * 4.0, p2y = ty - uy * 8.5 - py * 4.0;
+      svg.innerHTML = '<line x1="' + cx2 + '" y1="' + cy2 + '" x2="' + ex.toFixed(1) + '" y2="' + ey.toFixed(1) +
+        '" stroke="#f4951f" stroke-width="2.2" opacity="0.92"/>' +
+        '<polygon points="' + tx.toFixed(1) + ',' + ty.toFixed(1) + ' ' + p1x.toFixed(1) + ',' + p1y.toFixed(1) +
+        ' ' + p2x.toFixed(1) + ',' + p2y.toFixed(1) + '" fill="#f4951f" opacity="0.95"/>';
+    });
+  };
+  const applica = () => {
+    const g = GIRI[GIRO_CUR];
+    if (!g || !g.m) { el.style.display = 'none'; return; }
+    const m = g.m;
+    el.style.display = 'block';
+    el.style.backgroundImage = 'url(' + g.img.src + ')';
+    el.style.backgroundSize = (m.cols * W) + 'px ' + (Math.ceil(m.n / m.cols) * H) + 'px';
+    el.style.backgroundPosition = (-(frame % m.cols) * W) + 'px ' + (-Math.floor(frame / m.cols) * H) + 'px';
+  };
+  // cambio di personaggio nel carosello: sprite, targhette e fotogramma ripartono
+  window._loaderAvatar = (av, pronto) => {
+    GIRO_CUR = av.id; caricaGiro(av);
+    frame = 0; ti = pronto ? ti : Math.floor(Math.random() * 3);
+    applica();
+    if (chipT) clearInterval(chipT);
+    show(); chipT = setInterval(show, 2600);
+  };
+  timer = setInterval(() => {
+    const g = GIRI[GIRO_CUR]; if (!g || !g.m) return;
+    frame = (frame + 1) % g.m.n;
+    el.style.backgroundPosition = (-(frame % g.m.cols) * W) + 'px ' + (-Math.floor(frame / g.m.cols) * H) + 'px';
+  }, 80);
+  caricaGiro(AVATARS[0]);
+  window._loaderAvatar(AVATARS[0]);
   window._loaderStop = () => {
     if (timer) clearInterval(timer);
     if (chipT) clearInterval(chipT);
@@ -381,7 +425,15 @@ async function boot(){
     try { buildAvatarPicker(); } catch (e) { console.warn('avatar:', e); }
     const go = $('go-btn');
     go.style.display = 'inline-block';
-    go.onclick = chiudi;
+    go.onclick = async () => {
+      if (st.avatar && st.avatar !== 'lino') {
+        go.disabled = true; go.textContent = 'UN ATTIMO…';
+        try { await caricaAvatar(st.avatar); }
+        catch (e) { console.warn('personaggio non caricato, resta Lino:', e); st.avatar = 'lino'; }
+        go.disabled = false;
+      }
+      chiudi();
+    };
   }
   window.SRMX = { st, scene: () => scene, route: () => route, vista: setView, terra: groundAt, cam: () => camera, ctrl: () => controls, lino: () => lino, terraV: (x, z, y) => terraVera(x, z, y),
                   look: (p, t) => { camera.position.set(p[0], p[1], p[2]); camTgt.set(t[0], t[1], t[2]); controls.target.copy(camTgt); controls.update(); },
@@ -3930,7 +3982,7 @@ function flyStart(){
   document.body.classList.add('grif');
   document.body.classList.toggle('touch', isTouch());
   controls.enabled = false;
-  $('b-grif').classList.add('on'); $('b-grif').textContent = 'TORNA A LINO';
+  $('b-grif').classList.add('on'); $('b-grif').textContent = 'TORNA A ' + nomeAvatar();
   const lab = document.querySelectorAll('#bar .slot .lab');
   lab[0].textContent = (RIG && RIG.sp.terra) ? 'A terra' : 'In volo'; lab[1].textContent = 'Velocità'; lab[3].textContent = (RIG && RIG.sp.terra) ? 'Pendenza' : 'Vario';
   $('zona-n').textContent = nomeVolo(); $('zona-s').textContent = '';
@@ -5074,13 +5126,13 @@ function tick(){
   lino.rotateZ(-0.10 - pitch * 0.18);
   if (mixer && LINOACT) {
     // pesi: fermo -> cammina (fino a ~30 km/h di scena) -> corre -> carica quando tiene premuto a lungo
-    const v = st.speed, sprint = st.hold > 2.2 ? 1 : 0;
+    const v = st.speed, sprint = (st.hold > 2.2 && LINOACT.charge) ? 1 : 0;   // senza clip "charge" lo sprint resta corsa (piu' veloce)
     const wWalk = clamp(1 - (v - 40) / 40, 0, 1), wRun = clamp((v - 40) / 40, 0, 1) * (1 - sprint), wCh = clamp((v - 40) / 40, 0, 1) * sprint;
     const k = 1 - Math.exp(-6 * dt);
     if (LINOACT.walk) LINOACT.walk.setEffectiveWeight(lerp(LINOACT.walk.getEffectiveWeight(), wWalk, k));
     if (LINOACT.run) LINOACT.run.setEffectiveWeight(lerp(LINOACT.run.getEffectiveWeight(), wRun, k));
     if (LINOACT.charge) LINOACT.charge.setEffectiveWeight(lerp(LINOACT.charge.getEffectiveWeight(), wCh, k));
-    mixer.timeScale = v < 1 ? 0 : clamp(0.35 + v / 90, 0.35, 2.2);
+    mixer.timeScale = v < 1 ? 0 : clamp(0.35 + v / 90, 0.35, 2.2) * (st.hold > 2.2 && !LINOACT.charge ? 1.25 : 1);
     mixer.update(dt);
     // i bastoncini si prendono a S. Maria in Valle Porclaneta (km 8,2)
     const conPoli = st.s >= 8200;
