@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'v87';
+const VER = 'v87b';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -3617,7 +3617,7 @@ const NATURA_IDX = [
     ['Il ghiaione della Selletta', 'brecciai 8120', 21.05, () => schedaGhiaione(21050), 'perché si muove e chi ci vive'] ] },
   { g: 'Fauna lungo il percorso', voci: [
     ['Cervo', 'Cervus elaphus', 7.8, () => schedaCervoStatico(), 'Valle Porclaneta; dal grifone puoi anche cavalcarlo'],
-    ['Cinghiale', 'Sus scrofa', 9.3, () => schedaCinghiale(9300), 'al margine delle querce sopra Rosciolo'],
+    ['Cinghiale', 'Sus scrofa', 9.15, () => schedaCinghiale(9150), 'al margine delle querce sopra Rosciolo (un secondo al km 9,62)'],
     ['Coturnice', 'Alectoris graeca', 10.7, () => schedaCoturnice(10700), '50–70 capi nella Riserva, in calo'],
     ['Camoscio appenninico', 'Rupicapra pyrenaica ornata', 12.5, () => schedaCamoscio(12500), 'reintroduzione 2026–2030 in Val di Teve'],
     ['Vipera dell’Orsini', 'Vipera ursinii', 13.35, () => schedaVipera(13350), 'la vipera più piccola d’Europa, innocua'],
@@ -3684,9 +3684,9 @@ async function buildCinghiali(loader){
   const K = (route.lino_h || 7.8) / 1.7;
   const zoccoli = -0.32;                                    // quota degli zoccoli nel modello (misurata)
   const sc = 0.95 * K / (bb.max.y - zoccoli);               // 95 cm al garrese (un filo piu' del vero)
-  g.scene.position.set(-(bb.min.x + bb.max.x) / 2 * sc, -(zoccoli + 0.02) * sc, -(bb.min.z + bb.max.z) / 2 * sc);   // zolla sotto terra, zoccoli 2 cm dentro l'erba
+  g.scene.position.set(-(bb.min.x + bb.max.x) / 2 * sc, -(zoccoli - 0.10) * sc, -(bb.min.z + bb.max.z) / 2 * sc);   // zolla per meta' fuori terra (si vede il fango del suo insoglio), zoccoli ~10 cm sopra il prato
   g.scene.scale.setScalar(sc);
-  const posti = [[9300, -1, 13, 0.7], [9450, 1, 9, -0.5]];
+  const posti = [[9150, -1, 14, 0.7], [9620, 1, 11, -0.5]];   // 470 m l'uno dall'altro, su lati opposti
   for (const [sS, lato, dist, rot] of posti) {
     posAt(sS, tmpA); tanAt(sS, tmpB);
     const x = tmpA.x - tmpB.z * dist * K * lato, z = tmpA.z + tmpB.x * dist * K * lato;
