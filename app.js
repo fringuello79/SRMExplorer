@@ -5,8 +5,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'v85';
+const VER = 'v86';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -407,6 +408,9 @@ async function boot(){
   buildCoturnici(loader).catch(e => console.warn('coturnici:', e));
   buildCamosci(loader).catch(e => console.warn('camosci:', e));
   buildVipere(loader).catch(e => console.warn('vipere:', e));
+  buildFringuelli(loader).catch(e => console.warn('fringuelli:', e));
+  try { buildGracchi(); } catch (e) { console.warn('gracchi:', e); }
+  try { buildGhiaione(); } catch (e) { console.warn('ghiaione:', e); }
   buildChiesaNives(loader).catch(e => console.warn('chiesa Nives:', e));
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
@@ -1376,6 +1380,7 @@ function bindUI(){
   const bp = $('b-pov'); if (bp) bp.onclick = () => setView(st.view === 'fpv' ? 'follow' : 'fpv');
   $('b-help').onclick = showHelp;
   $('b-gara').onclick = showGara;
+  { const bn = $('b-nat'); if (bn) bn.onclick = showNatura; }
   { const bs = $('b-sent'); if (bs) bs.onclick = () => toggleSentieri(); let pref = null; try { pref = localStorage.getItem('srm-sentieri'); } catch (e) {} if (pref === '1') setTimeout(() => toggleSentieri(true), 1500); }
   $('b-grif').onclick = () => { if (FLY.on) flyStop(); else flyStart(); };
   $('modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
@@ -3413,13 +3418,34 @@ async function buildCamosci(loader){
     posAt(sS, tmpA); tanAt(sS, tmpB);
     const x = tmpA.x - tmpB.z * dist * K * lato, z = tmpA.z + tmpB.x * dist * K * lato;
     let y = terraVera(x, z, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z);
-    const grp = new THREE.Group(); grp.name = 'Camoscio'; grp.add(g.scene.clone(true));
+    const grp = new THREE.Group(); grp.name = 'Camoscio'; grp.add(cloneSkinned(g.scene));   // clone con scheletro proprio: le ossa del collo si muovono per esemplare
     grp.position.set(x, y - 0.03, z);
-    grp.rotation.y = Math.atan2(tmpA.x - x, tmpA.z - z) + Math.PI + rot;   // il muso (-z) verso il sentiero, piu' un po' di caso
+    grp.rotation.y = Math.atan2(tmpA.x - x, tmpA.z - z) + rot;   // il muso (+z) verso il sentiero, piu' un po' di caso
     const h = 2, gx = (terraVera(x + h, z, y + 8) - terraVera(x - h, z, y + 8)) / (2 * h), gz = (terraVera(x, z + h, y + 8) - terraVera(x, z - h, y + 8)) / (2 * h);
     if (Math.abs(gx) < 2 && Math.abs(gz) < 2) { const up = new THREE.Vector3(-gx, 1, -gz).normalize(); grp.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up)); }
     rendiCliccabile(grp, 0.9 * K, 0.6 * K, schedaCamoscio, sS);
     scene.add(grp);
+    // collo: Bone_038 (base) e Bone_037; rotazione x positiva = testa in basso (misurato nel rig)
+    const b38 = grp.getObjectByName('Bone_038'), b37 = grp.getObjectByName('Bone_037');
+    if (b38) CAMOSCI.push({ grp, b38, b37, r38: b38.rotation.x, r37: b37 ? b37.rotation.x : 0, t: Math.random() * 6, ciclo: 9 + Math.random() * 7, giu: 0 });
+  }
+}
+// movimento minimo dei camosci: ogni 9-16 s abbassano la testa a brucare per qualche secondo (transizione
+// morbida di 0,7 s, piccoli strappi mentre brucano), poi la rialzano e restano vigili. Solo entro 500 m.
+const CAMOSCI = [];
+function tickCamosci(dt){
+  if (!CAMOSCI.length) return;
+  const vicino = CAMOSCI[0].grp.position.distanceTo(camera.position) < 500 * 4.6;
+  if (!vicino) return;
+  for (const c of CAMOSCI) {
+    c.t += dt; if (c.t > c.ciclo) { c.t = 0; c.ciclo = 9 + Math.random() * 7; }
+    const fr = c.t / c.ciclo;                                  // 0..1 nel ciclo: 0-0,42 bruca, poi vigile
+    const sm = u => u * u * (3 - 2 * u);
+    let w = fr < 0.06 ? sm(fr / 0.06) : fr < 0.36 ? 1 : fr < 0.42 ? 1 - sm((fr - 0.36) / 0.06) : 0;
+    const strappo = w > 0.99 ? Math.sin(c.t * 7.3) * 0.05 + Math.sin(c.t * 11.1) * 0.03 : 0;
+    const vigile = w < 0.01 ? Math.sin(c.t * 0.9 + c.ciclo) * 0.04 : 0;   // da fermo gira appena la testa
+    c.b38.rotation.x = c.r38 + 0.62 * w + strappo;
+    if (c.b37) { c.b37.rotation.x = c.r37 + 0.30 * w; c.b37.rotation.y = vigile * 2.5; }
   }
 }
 // ---------- vipere dell'Orsini: due animali arrotolati al sole su un masso a bordo sentiero, fra i ginepri
@@ -3448,6 +3474,192 @@ async function buildVipere(loader){
     rendiCliccabile(grp, 0.55 * K, 0.2 * K, schedaVipera, sS);
     scene.add(grp);
   }
+}
+// ---------- fringuello alpino: due uccellini posati su un sasso, alla Capanna di Sevice (km 14,66, dove si
+// avvicina a chi mangia) e sulla spalla del Velino (km 17,05). Modello Meshy statico, ridotto a 9,8k tris; guarda +z.
+async function buildFringuelli(loader){
+  const g = await loadGLB(loader, 'assets/fringuello.glb?' + VER, () => {});
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = false; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.85; } } });
+  const bb = new THREE.Box3().setFromObject(g.scene), sz = bb.getSize(new THREE.Vector3());
+  const K = (route.lino_h || 7.8) / 1.7;
+  const sc = 0.30 * K / sz.y;                               // 30 cm (il vero e' 17-18: ingrandito come gli altri animali piccoli)
+  g.scene.position.set(-(bb.min.x + bb.max.x) / 2 * sc, -bb.min.y * sc, -(bb.min.z + bb.max.z) / 2 * sc);
+  g.scene.scale.setScalar(sc);
+  const rocciaGeo = geoRoccia(417, 2), rocciaMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, flatShading: true });
+  const posti = [[14660, -1, 2.4, 0.5], [17050, 1, 2.0, -0.7]];
+  for (const [sS, lato, dist, rot] of posti) {
+    posAt(sS, tmpA); tanAt(sS, tmpB);
+    const x = tmpA.x - tmpB.z * dist * K * lato, z = tmpA.z + tmpB.x * dist * K * lato;
+    let y = terraVera(x, z, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z);
+    const grp = new THREE.Group(); grp.name = 'Fringuello';
+    const rx = 0.40 * K, ry = 0.26 * K, rz = 0.34 * K;
+    const roccia = new THREE.Mesh(rocciaGeo, rocciaMat); roccia.scale.set(rx, ry, rz); roccia.position.y = -ry * 0.3; roccia.castShadow = true; roccia.receiveShadow = true; grp.add(roccia);
+    const f = g.scene.clone(true); f.position.y = ry * 0.68; f.rotation.y = Math.atan2(tmpA.x - x, tmpA.z - z) + rot; grp.add(f);   // verso il sentiero (+z), con un po' di caso
+    grp.position.set(x, y, z);
+    const h = 1.2, gx = (terraVera(x + h, z, y + 8) - terraVera(x - h, z, y + 8)) / (2 * h), gz = (terraVera(x, z + h, y + 8) - terraVera(x, z - h, y + 8)) / (2 * h);
+    if (Math.abs(gx) < 2 && Math.abs(gz) < 2) { const up = new THREE.Vector3(-gx, 1, -gz).normalize(); grp.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up)); }
+    rendiCliccabile(grp, 0.55 * K, 0.35 * K, schedaFringuello, sS);
+    scene.add(grp);
+  }
+}
+function schedaFringuello(sS){
+  const km = (sS / 1000).toFixed(1).replace('.', ',');
+  openCard('<h2>Fringuello alpino</h2><h3><i>Montifringilla nivalis</i> · km ' + km + '</h3>' +
+    '<p>Un passero robusto delle alte quote, grigio in testa, bruno sul dorso e con le ali bianche e nere che lampeggiano in volo. Vive tutto l’anno sopra il limite degli alberi, nidifica nelle fessure delle rocce e d’inverno scende appena di quota, mai in pianura.</p>' +
+    '<table><tr><th>Dove</th><td>Creste, pietraie e praterie sommitali del Velino, fra i 1.900 e i 2.480 m. È nella checklist degli uccelli della Riserva.</td></tr>' +
+    '<tr><th>Abitudini</th><td>Poco timoroso: attorno ai rifugi e ai punti di sosta si avvicina a raccogliere le briciole. Alla Capanna di Sevice, durante il ristoro, è lui che ti guarda da un sasso. Cerca semi e insetti sulla neve in fusione e sui ghiaioni.</td></tr>' +
+    '<tr><th>Perché conta</th><td>Specie legata al freddo e relitto glaciale come la Silene: in tutto l’Appennino il riscaldamento del clima la spinge sempre più in alto. Contarli sulle vette è uno dei modi per misurare la salute della montagna.</td></tr></table>' +
+    '<p style="margin-top:10px;font-size:13px;color:var(--ambra)">P.S. Chi ha costruito il sito e l’Explorer che stai usando si firma col nome di questo uccellino da quando era un ragazzetto. Dicono che gli somigli: poco timoroso, sempre in quota e sempre nei paraggi di un ristoro.</p>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (checklist degli uccelli); Guida naturalistica SRM 2026.</p>');
+}
+// ---------- gracchi corallini: uno stormo di 14 sprite che volteggia sulla cresta Velino-Cafornia (km ~17,9).
+// Silhouette nera disegnata su canvas in tre fotogrammi (ali su / medie / giu'); ogni uccello ha fase e raggio
+// propri; lo stormo si vede solo entro 2,5 km (o in volo). Un'unica sfera invisibile al centro apre la scheda.
+const GRACCHI = { lista: [], mats: [], c: null, on: false, hit: null };
+function texGracchio(fr){
+  const S = 64, cv = document.createElement('canvas'); cv.width = cv.height = S; const c = cv.getContext('2d');
+  c.clearRect(0, 0, S, S); c.fillStyle = '#121212'; c.strokeStyle = '#121212'; c.lineCap = 'round';
+  const dy = [-14, -2, 11][fr];                       // altezza delle punte delle ali
+  c.beginPath(); c.moveTo(4, 34 + dy); c.quadraticCurveTo(18, 30, 32, 36); c.quadraticCurveTo(46, 30, 60, 34 + dy);   // bordo d'attacco
+  c.quadraticCurveTo(46, 40 + dy * 0.35, 36, 42); c.lineTo(28, 42); c.quadraticCurveTo(18, 40 + dy * 0.35, 4, 34 + dy); c.fill();
+  c.beginPath(); c.ellipse(32, 38, 4.2, 7.5, 0, 0, 6.3); c.fill();                       // corpo
+  c.beginPath(); c.moveTo(29, 44); c.lineTo(32, 52); c.lineTo(35, 44); c.fill();       // coda
+  c.fillStyle = '#d23a1a'; c.beginPath(); c.ellipse(32, 30.5, 1.6, 2.6, 0, 0, 6.3); c.fill();   // becco rosso
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+function buildGracchi(){
+  const K = (route.lino_h || 7.8) / 1.7;
+  GRACCHI.mats = [0, 1, 2].map(i => new THREE.SpriteMaterial({ map: texGracchio(i), transparent: true, depthWrite: false, fog: true }));
+  posAt(17900, tmpA);
+  GRACCHI.c = new THREE.Vector3(tmpA.x, tmpA.y + 14 * K, tmpA.z);
+  const grp = new THREE.Group(); grp.name = 'Gracchi'; grp.visible = false;
+  for (let i = 0; i < 14; i++) {
+    const sp = new THREE.Sprite(GRACCHI.mats[i % 3]);
+    const w = (0.75 + Math.random() * 0.2) * K; sp.scale.set(w, w, 1);
+    sp.userData = { ph: Math.random() * 6.283, r: (18 + Math.random() * 30) * K, h: (Math.random() - 0.5) * 10 * K, vel: 0.22 + Math.random() * 0.1, fr: Math.random() * 3, bat: 0.5 + Math.random() };
+    grp.add(sp); GRACCHI.lista.push(sp);
+  }
+  // sfera di tocco al centro dello stormo
+  const hit = new THREE.Mesh(new THREE.SphereGeometry(16 * K, 10, 8), hitMatC);
+  hit.position.copy(GRACCHI.c); hit.userData.scheda = schedaGracchio; hit.userData.sS = 17900; GRACCHI.hit = hit;
+  CLICCABILI.push(hit); grp.add(hit);
+  scene.add(grp); GRACCHI.grp = grp;
+}
+function tickGracchi(dt){
+  if (!GRACCHI.grp) return;
+  const vicino = FLY.on ? camera.position.distanceTo(GRACCHI.c) < 3500 : Math.abs(st.s - 17900) < 2500;
+  if (GRACCHI.grp.visible !== vicino) GRACCHI.grp.visible = vicino;
+  if (!vicino) return;
+  const t = performance.now() / 1000;
+  for (const sp of GRACCHI.lista) {
+    const u = sp.userData, a = u.ph + t * u.vel;
+    // orbita ellittica inclinata lungo la cresta, con una lenta deriva del raggio e saliscendi
+    const r = u.r * (1 + 0.18 * Math.sin(t * 0.17 + u.ph));
+    sp.position.set(GRACCHI.c.x + Math.cos(a) * r * 1.4, GRACCHI.c.y + u.h + Math.sin(t * 0.6 + u.ph * 2) * 4 + Math.sin(a * 2) * 3, GRACCHI.c.z + Math.sin(a) * r);
+    // battito: brevi serie di colpi d'ala alternate a planate (fermi sul fotogramma medio)
+    const fase = (t * 0.35 + u.ph) % 2;
+    if (fase < 0.9) { u.fr += dt * 11 * u.bat; const f = Math.floor(u.fr) % 4; sp.material = GRACCHI.mats[f === 3 ? 1 : f]; }
+    else sp.material = GRACCHI.mats[1];
+  }
+}
+function schedaGracchio(){
+  openCard('<h2>Gracchio corallino</h2><h3><i>Pyrrhocorax pyrrhocorax</i> · cresta Velino–Cafornia</h3>' +
+    '<p>Il corvo delle vette: nero lucido, becco lungo e ricurvo rosso corallo, zampe rosse. Vola in stormi rumorosi che giocano col vento lungo le creste, con picchiate, capovolte e richiami squillanti («kiàa») che si sentono da lontano.</p>' +
+    '<table><tr><th>Dove</th><td>Pareti e praterie sommitali del massiccio: nidifica in cavità e cenge delle rupi, si nutre a terra sulle praterie d’altura di insetti e larve, che cerca scavando con il becco. È nella checklist degli uccelli della Riserva insieme al gracchio alpino.</td></tr>' +
+    '<tr><th>In gara</th><td>Fra la spalla del Velino e la cresta del Cafornia è facile vederne uno stormo alzarsi dai pascoli al passaggio dei primi concorrenti.</td></tr>' +
+    '<tr><th>Perché conta</th><td>Specie dell’Allegato I della Direttiva Uccelli, in declino in gran parte d’Europa per la perdita dei pascoli: sugli Appennini resiste dove la pastorizia tiene aperte le praterie.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (checklist degli uccelli).</p>');
+}
+// ---------- ghiaione della Selletta: scheda cliccabile sui brecciai della discesa tecnica (km 21,05)
+function buildGhiaione(){
+  const K = (route.lino_h || 7.8) / 1.7, sS = 21050;
+  posAt(sS, tmpA); tanAt(sS, tmpB);
+  const x = tmpA.x - tmpB.z * 4 * K, z = tmpA.z + tmpB.x * 4 * K;
+  let y = terraVera(x, z, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z);
+  const grp = new THREE.Group(); grp.name = 'Ghiaione'; grp.position.set(x, y, z);
+  rendiCliccabile(grp, 3 * K, 0.5 * K, schedaGhiaione, sS);
+  scene.add(grp);
+}
+function schedaGhiaione(sS){
+  openCard('<h2>Il ghiaione della Selletta</h2><h3>brecciai di altitudine · km 21,0 – 22,5</h3>' +
+    '<p>Da qui parte la discesa che decide la gara: pietre mobili, grosse e spigolose, che il gelo stacca ogni inverno dalle creste e che scivolano verso valle. Non è terreno «morto»: è uno degli habitat più particolari della Riserva.</p>' +
+    '<table><tr><th>Che cos’è</th><td>Il Piano di gestione distingue i <b>brecciai attivi</b> dei circhi glaciali (a nord di Sevice e Velino, a est e sud del Cafornia), colonizzati solo da poche piante pioniere a radice profonda come <i>Isatis allionii</i> e il panace d’Orsini, dai <b>brecciai consolidati</b> dove la festuca (<i>Festuca dimorpha</i>) riesce a fermare le pietre e a coprirne un terzo.</td></tr>' +
+    '<tr><th>Habitat</th><td>«Ghiaioni calcarei montani e alpini» (codice 8120 della Direttiva Habitat), fra 1.600 e 2.300 m: una fascia che sul Velino copre quasi 4 km². Più in basso, in Valle Majelama, i ghiaioni termofili a ligustico (8130) esistono solo qui e sul Morrone.</td></tr>' +
+    '<tr><th>Perché si muove</th><td>Il suolo gela e sgela decine di volte l’anno: l’acqua nelle fessure spacca la roccia (crioclastismo) e il ghiaccio spinge i clasti verso il basso. Ogni pianta che attecchisce è un ancoraggio.</td></tr>' +
+    '<tr><th>In gara</th><td>Resta sulla traccia segnata: tagliare il ghiaione smuove pietre su chi è sotto e strappa le poche piante che lo tengono fermo.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità IH, GF, DL).</p>');
+}
+// ---------- indice naturalistico (pulsante NATURA): le specie cliccabili lungo il percorso, con "portami li'",
+// e le altre specie e gli habitat censiti dal Piano di gestione della Riserva, con due righe ciascuna.
+const NATURA_IDX = [
+  // in scena: [nome, latino, km, scheda, nota breve]
+  { g: 'Flora lungo il percorso', voci: [
+    ['Roverella', 'Quercus pubescens', 8.9, () => schedaRoverella(), 'querceti fino a 1.200 m sul Rozza'],
+    ['Pioppo tremulo', 'Populus tremula', 10.0, () => schedaPioppo(10000), 'boschetti dei valloni SW e di Valle Majelama'],
+    ['Ginepro nano e uva ursina', 'Juniperus sibirica · Arctostaphylos', 13.4, () => schedaGinepro(13400), 'lande alpine, 1.700–2.200 m'],
+    ['Adonide ricurva', 'Adonis distorta', 14.4, () => schedaAdonide(14400), 'endemismo, 4.658 piante nella Riserva'],
+    ['Silene a cuscinetto', 'Silene acaulis cenisia', 17.1, () => schedaSilene(17100), 'tundra relitta, 5 biotopi sommitali'],
+    ['Genziana maggiore', 'Gentiana lutea', 20.2, () => schedaGenziana(20200), 'praterie della discesa'],
+    ['Faggi e boscaglie di Majelama', 'Fagus · Corylus', 22.6, () => schedaBoscaglia(), 'fondovalle fresco della discesa'],
+    ['Il ghiaione della Selletta', 'brecciai 8120', 21.05, () => schedaGhiaione(21050), 'perché si muove e chi ci vive'] ] },
+  { g: 'Fauna lungo il percorso', voci: [
+    ['Cervo', 'Cervus elaphus', 7.8, () => schedaCervoStatico(), 'Valle Porclaneta; dal grifone puoi anche cavalcarlo'],
+    ['Coturnice', 'Alectoris graeca', 10.7, () => schedaCoturnice(10700), '50–70 capi nella Riserva, in calo'],
+    ['Camoscio appenninico', 'Rupicapra pyrenaica ornata', 12.5, () => schedaCamoscio(12500), 'reintroduzione 2026–2030 in Val di Teve'],
+    ['Vipera dell’Orsini', 'Vipera ursinii', 13.35, () => schedaVipera(13350), 'la vipera più piccola d’Europa, innocua'],
+    ['Fringuello alpino', 'Montifringilla nivalis', 14.66, () => schedaFringuello(14660), 'alla Capanna di Sevice'],
+    ['Gracchio corallino', 'Pyrrhocorax pyrrhocorax', 17.9, () => schedaGracchio(), 'lo stormo sulla cresta Velino–Cafornia'],
+    ['Lupo appenninico', 'Canis lupus italicus', 25.6, () => schedaLupo(), 'Pratoni di Massa d’Albe'] ] },
+  { g: 'Con il grifone (tasto C per cambiare)', testo: [
+    ['Grifone', 'Gyps fulvus', 'Il grande avvoltoio reintrodotto sul Velino dal 1994: oltre 2,5 m di apertura alare, colonie sulle pareti della Riserva, decine di coppie nidificanti. Lo guidi tu, dal pulsante GRIFONE.'],
+    ['Aquila reale', 'Aquila chrysaetos', 'Una o due coppie sul massiccio; caccia lepri e marmotte… qui soprattutto lepri, sulle praterie d’altura.'],
+    ['Falco pellegrino', 'Falco peregrinus', 'Nidifica sulle pareti; in picchiata supera i 300 km/h, l’animale più veloce del pianeta.'] ] },
+  { g: 'Prossimamente nell’Explorer', testo: [
+    ['Lepre europea', 'Lepus europaeus', '«Molto comune, fino a 2.300 m»: la vedrai sulle praterie del Rozza. Nella Riserva vive anche la lepre italica (<i>Lepus corsicanus</i>), più rara.'],
+    ['Cinghiale', 'Sus scrofa', 'Diffuso fino a 2.000 m; al margine delle querce sopra Rosciolo.'] ] },
+  { g: 'Altri mammiferi della Riserva (41 specie nel Piano)', testo: [
+    ['Orso bruno marsicano', 'Ursus arctos marsicanus', 'Pochi animali sporadici, di passaggio nelle valli; monitorato con fototrappole dal 2017. Nessun incontro atteso in gara, ma il Velino è parte del suo corridoio.'],
+    ['Gatto selvatico', 'Felis silvestris', 'Presente in modo stabile nelle due valli principali (Teve e Majelama), monitoraggi sistematici 2019 e 2021.'],
+    ['Capriolo', 'Capreolus capreolus', 'Occasionale nei boschi della Val di Teve.'],
+    ['Martora, faina, tasso', 'Martes martes · M. foina · Meles meles', 'La martora è molto rara, certa solo in Val di Teve; faina e tasso sono diffusi.'],
+    ['Istrice', 'Hystrix cristata', 'Poco diffusa, alle quote basse fino a 1.700 m.'],
+    ['Arvicola delle nevi', 'Chionomys nivalis', 'Rara, solo sopra i 1.500 m e fino alle vette: il roditore delle pietraie d’alta quota.'],
+    ['Toporagno appenninico', 'Sorex samniticus', 'Endemico dell’Appennino centrale: piccolo, poco diffuso, importantissimo.'],
+    ['Scoiattolo, ghiro, moscardino, quercino', '', 'I piccoli mammiferi dei boschi; nella Riserva anche 10 specie di pipistrelli.'] ] },
+  { g: 'Altri uccelli delle creste', testo: [
+    ['Picchio muraiolo', 'Tichodroma muraria', 'La «farfalla delle rocce»: grigio con ali rosso carminio, si arrampica sulle pareti verticali.'],
+    ['Sordone e codirossone', 'Prunella collaris · Monticola saxatilis', 'Il sordone resta tutto l’anno sulle pietraie sommitali; il codirossone, arancio e azzurro, nidifica sui versanti sassosi e sverna in Africa.'],
+    ['Merlo dal collare e corvo imperiale', 'Turdus torquatus · Corvus corax', 'Il merlo delle alte quote, con la mezzaluna bianca sul petto; il corvo imperiale veleggia sulle creste e segue i grifoni.'],
+    ['Passero solitario e upupa', 'Monticola solitarius · Upupa epops', 'Il passero solitario sulle rupi assolate basse; l’upupa nei pascoli alberati vicino al paese.'] ] },
+  { g: 'Rettili e anfibi (checklist del Piano)', testo: [
+    ['Vipera comune', 'Vipera aspis', 'Alle quote medie e basse, nei pascoli con muretti e sassi; schiva, morde solo se calpestata.'],
+    ['Luscengola', 'Chalcides chalcides', 'Lucertola-serpente dalle zampe minuscole: rara ma trovata fino a 2.077 m, quota insolita.'],
+    ['Biacco, cervone, saettone, colubro liscio', '', 'I serpenti non velenosi della Riserva; il cervone (<i>Elaphe quatuorlineata</i>) è specie di interesse comunitario.'],
+    ['Ramarro, lucertola muraiola e campestre, orbettino', '', 'Comuni nei pascoli e sui muretti fino alle praterie.'],
+    ['Rospo comune e rane verdi', 'Bufo bufo · Pelophylax', 'Le rane solo in alcuni fontanili al confine sud; tritone italiano e salamandrina non vengono più osservati da vent’anni.'] ] },
+  { g: 'Insetti e habitat', testo: [
+    ['Rosalia alpina', 'Rosalia alpina', 'Il cerambice azzurro a macchie nere delle faggete vetuste: nella Riserva solo nell’alta Val di Teve, specie prioritaria europea.'],
+    ['Faggete con tasso e agrifoglio', 'habitat 9210*', 'La faggeta antica della Val di Teve, con betulla (relitto glaciale) e sorbo alpino: fuori dal tracciato, è il cuore della Zona A.'],
+    ['Praterie di cresta a Sesleria', 'habitat 6170', 'Le praterie discontinue delle creste da Sevice al Cafornia, con endemismi appenninico-dinarici: il «prato» su cui corri sopra i 2.100 m.'],
+    ['Pino nero dei rimboschimenti', 'Pinus nigra', 'Le pinete sopra Fonte Canale (1.150–1.400 m) sono piantagioni del Novecento, oggi in lenta rinaturalizzazione.'],
+    ['30 unità vegetazionali', '', 'Tante ne distingue il Piano di gestione, con habitat prioritari europei: tundra a Silene, praterie a Nardo, faggete appenniniche.'] ] }
+];
+function showNatura(){
+  const kmTxt = k => k.toFixed(k % 1 ? 2 : 1).replace('.', ',');
+  let h = '<h2>Natura della Riserva</h2><h3>specie e habitat lungo il percorso · dal Piano di gestione della Riserva Naturale Orientata Monte Velino</h3>' +
+    '<p style="font-size:13px">Tocca un nome per la scheda; <b>«portami lì»</b> sposta il personaggio al chilometro giusto, poi cerca e tocca la pianta o l’animale.</p>';
+  NATURA_IDX.forEach((sez, si) => {
+    h += '<h3 style="margin-top:14px">' + sez.g + '</h3><ul class="nat">';
+    if (sez.voci) sez.voci.forEach((v, vi) => {
+      h += '<li><a href="#" data-nat="' + si + ',' + vi + '"><b>' + v[0] + '</b></a> <i>' + v[1] + '</i> · km ' + kmTxt(v[2]) + ' · <span class="nota">' + v[4] + '</span> <a href="#" class="vai" data-km="' + v[2] + '">portami lì →</a></li>';
+    });
+    if (sez.testo) sez.testo.forEach(v => { h += '<li><b>' + v[0] + '</b>' + (v[1] ? ' <i>' + v[1] + '</i>' : '') + '<br><span class="nota">' + v[2] + '</span></li>'; });
+    h += '</ul>';
+  });
+  h += '<p style="margin-top:10px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino v. 2.2 (checklist di mammiferi, uccelli, rettili, anfibi e artropodi; unità vegetazionali); Guida naturalistica SRM 2026.</p>';
+  openCard(h);
+  $('card').querySelectorAll('a[data-nat]').forEach(a => a.onclick = e => { e.preventDefault(); const [si, vi] = a.dataset.nat.split(',').map(Number); NATURA_IDX[si].voci[vi][3](); });
+  $('card').querySelectorAll('a.vai').forEach(a => a.onclick = e => { e.preventDefault(); closeModal(); if (FLY.on) flyStop(); st.sTarget = clamp(+a.dataset.km * 1000, 0, TOT); setFollow(true); });
 }
 // ---------- coturnici: un gruppetto fermo sui pascoli sassosi sopra Passo Le Forche (km ~10,7) ----------
 // Il modello (semplificato, 6.000 triangoli) guarda verso +z e poggia su un sasso: si posa su terraVera,
@@ -5206,7 +5418,7 @@ function tick(){
   if (SKY) SKY.position.copy(camera.position);
   if (NUVOLE.length) tickNuvole(dt);
   if (VENTO_SH.length) { const tt = performance.now() / 1000; for (const sh of VENTO_SH) sh.uniforms.uT.value = tt; }
-  tickAnimali(dt);
+  tickAnimali(dt); tickCamosci(dt); tickGracchi(dt);
   if (FLY.on) {
     tickFly(dt);
     if (mixer) mixer.update(0);
