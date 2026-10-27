@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'v90';
+const VER = 'v90b';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -1499,7 +1499,7 @@ const FOTO_CREDITI = {
   // adonide: 'foto M. Rossi', genziana: 'foto Wikimedia Commons · CC BY-SA', ...
 };
 function fotoHTML(id){
-  const cr = FOTO_CREDITI[id] || '';
+  const cr = FOTO_CREDITI[id] !== undefined ? FOTO_CREDITI[id] : 'immagine generata con IA, a scopo illustrativo';
   return '<figure class="foto" onclick="this.classList.toggle(\'grande\')"><img src="assets/foto/' + id + '.jpg?' + VER + '" alt="" loading="lazy" onerror="this.closest(\'figure\').style.display=\'none\'">' +
     (cr ? '<figcaption>' + cr + '</figcaption>' : '') + '</figure>';
 }
