@@ -6,7 +6,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const VER = 'v84b';
+const VER = 'v85';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -405,6 +405,8 @@ async function boot(){
   buildMezzoPC(loader).catch(e => console.warn('mezzo PC:', e));
   try { buildGenziane(); } catch (e) { console.warn('genziane:', e); }
   buildCoturnici(loader).catch(e => console.warn('coturnici:', e));
+  buildCamosci(loader).catch(e => console.warn('camosci:', e));
+  buildVipere(loader).catch(e => console.warn('vipere:', e));
   buildChiesaNives(loader).catch(e => console.warn('chiesa Nives:', e));
   try { buildDataSassi(); } catch (e) { console.warn('sassi:', e); }
   try { buildNubiBasse(); } catch (e) { console.warn('nubi:', e); }
@@ -3139,6 +3141,26 @@ function texSilene(seme){
   const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.anisotropy = 4;
   return t;
 }
+// ginepro nano (Juniperus sibirica) con uva ursina: arbusto prostrato a cuscino, largo 1-3 m e alto 30-50 cm,
+// verde cupo bluastro; alla base i tappeti rossicci-verdi dell'uva ursina (Arctostaphylos). Unita' AM/DJ del Piano
+// di gestione (habitat 4060, "lande alpine"), la fascia piu' estesa e caratteristica del Velino fra 1.700 e 2.200 m.
+// Geometria normalizzata (larghezza ~1): 4-6 lobi + 2 tappeti, ~420 triangoli.
+function geoGinepro(seme){
+  const rnd = rngDa(seme), parti = [];
+  const nL = 4 + Math.floor(rnd() * 3);
+  for (let i = 0; i < nL; i++) {
+    const a = rnd() * Math.PI * 2, d = (i === 0 ? 0 : 0.16 + rnd() * 0.22), r = 0.22 + rnd() * 0.14;
+    const g = new THREE.IcosahedronGeometry(r, 1); g.scale(1 + rnd() * 0.3, 0.42 + rnd() * 0.16, 1 + rnd() * 0.3);
+    g.rotateY(rnd() * 3); g.translate(Math.cos(a) * d, r * 0.30, Math.sin(a) * d);
+    parti.push(sfaccetta(g, rnd, 0.12, (c, y, ny, rr) => c.setHSL(0.36 + (rr() - 0.5) * 0.05, 0.30 + rr() * 0.12, 0.13 + 0.10 * Math.max(0, ny) + (rr() - 0.5) * 0.04)));
+  }
+  for (let i = 0; i < 2; i++) {   // uva ursina: tappeti bassi e larghi, verde-rossiccio
+    const a = rnd() * Math.PI * 2, d = 0.30 + rnd() * 0.16;
+    const g = new THREE.IcosahedronGeometry(0.26 + rnd() * 0.10, 1); g.scale(1.2, 0.10, 1 + rnd() * 0.4); g.rotateY(rnd() * 3); g.translate(Math.cos(a) * d, 0.0, Math.sin(a) * d);
+    parti.push(sfaccetta(g, rnd, 0.10, (c, y, ny, rr) => c.setHSL(0.19 + (rr() - 0.5) * 0.16, 0.42, 0.20 + 0.08 * Math.max(0, ny) + (rr() - 0.5) * 0.05)));
+  }
+  const g = mergeGeometries(parti, false); g.computeBoundingSphere(); return g;
+}
 // fattore radiale della forma del masso in un punto della sfera unitaria (usato anche per posare i cuscini)
 function bozzaRoccia(x, y, z){ return 1 + 0.10 * (Math.sin(x * 2.3 + z * 1.7) * Math.cos(y * 2.9 - x * 1.1)) + 0.06 * Math.sin(x * 5.1 + y * 4.3 + z * 3.7); }
 function geoRoccia(seme, det){
@@ -3171,7 +3193,9 @@ function buildPiantaLowPoly(cfg){
   m.customProgramCacheKey = () => 'lowpoly-' + cfg.nome;
   const rnd = rngDa(cfg.seme), posti = cfg.posti || [], rocce = [];
   for (const z of (cfg.zone || [])) for (let k = 0; k < z.n; k++) {
-    const sS = z.a + rnd() * (z.b - z.a);
+    let sS = z.a + rnd() * (z.b - z.a);
+    // z.qa / z.qb: fascia altitudinale (m) della specie; si ripesca il punto finche' la quota e' giusta
+    if (z.qa || z.qb) { let t = 0; while (t++ < 24 && ((z.qa && quotaAt(sS) < z.qa) || (z.qb && quotaAt(sS) > z.qb))) sS = z.a + rnd() * (z.b - z.a); if (t >= 24) continue; }
     const lato = z.lato || (rnd() < 0.5 ? -1 : 1), dist = z.d0 + rnd() * (z.d1 - z.d0);   // z.lato: -1 sinistra / +1 destra (nel verso di gara)
     posAt(sS, tmpA); tanAt(sS, tmpB);
     const cx = tmpA.x - tmpB.z * dist * K * lato, cz = tmpA.z + tmpB.x * dist * K * lato;
@@ -3262,6 +3286,13 @@ function buildGenziane(){
   // Fioritura giugno-luglio: qui si mostra in fiore per farla riconoscere, la scheda dice il periodo.
   try { buildSassiCresta(); } catch (e) { console.warn('sassi cresta:', e); }
   const bioSS = (a, b, lato, n) => ({ a, b, n, d0: 1.2, d1: 4.5, grp: [3, 6], lato });
+  // Ginepro nano e uva ursina (unita' AM): fascia sub-continua sul versante SW e S dal M. Rozza al Cafornia fra
+  // 1.700 e 2.200 m (scende a 1.300 solo sulle rotture di pendio): la salita da km 12,2 alla Capanna (destra =
+  // versante S) e la discesa dalla Selletta. Colonie di 2-4 cespugli larghi 1-2,5 m.
+  if (FLORA_3D) buildPiantaLowPoly({ nome: 'Ginepri', geo: geoGinepro(1911), seme: 19111, pendenza: true, ombra: false, sc0: 1.3, sc1: 1.5, rGrp: 2.8, affonda: -0.04,
+    zone: [{ a: 12200, b: 14650, n: 36, d0: 3, d1: 26, grp: [2, 4], lato: 1, qa: 1700, qb: 2200 }, { a: 12200, b: 14650, n: 14, d0: 4, d1: 20, grp: [1, 3], lato: -1, qa: 1700, qb: 2200 },
+           { a: 19400, b: 21200, n: 22, d0: 3, d1: 22, grp: [2, 4], qa: 1700, qb: 2200 }],
+    tinta: (c, r) => c.setHSL(0, 0, 0.86 + r * 0.28), scheda: schedaGinepro });
   if (FLORA_3D) buildPiantaLowPoly({ nome: 'Silene', geo: geoSilene(153), map: texSilene(154), seme: 15301, pendenza: true, roccia: true, ombra: false, piccola: true, sc0: 0.5, sc1: 0.55, affonda: -0.03, rGrp: 1.1,
     zone: [bioSS(15550, 15700, 1, 2), bioSS(16550, 16650, 1, 1), bioSS(17050, 17150, -1, 2), bioSS(18150, 18250, 1, 1), bioSS(19000, 19150, -1, 2)], scheda: schedaSilene });
   else buildImpostor({ nome: 'Silene', file: 'silene.webp', piccola: true, layout: 'cuscino', hReale: 0.06, larg: 0.38, seme: 15301, vento: 0, ombra: false, sc0: 0.7, sc1: 0.7, luce: 0.35,
@@ -3336,6 +3367,87 @@ function schedaSilene(sS){
     '<tr><th>Età</th><td>Cresce di pochi millimetri l’anno: un cuscino largo una mano può avere decenni di vita. I cuscini trattengono il poco suolo che si forma.</td></tr>' +
     '<tr><th>Attenzione</th><td>Associazione rara, presente in cinque soli biotopi relitti; oggi in buone condizioni, ma la sua tenuta dipende da un gesto solo: <b>corri sulla roccia, non sui cuscinetti</b>. Un piede fuori sentiero cancella mezzo secolo di crescita.</td></tr></table>' +
     '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità SS, <i>Saxifrago speciosae-Silenetum cenisiae</i>); Guida naturalistica SRM 2026.</p>');
+}
+function schedaGinepro(sS){
+  const km = (sS / 1000).toFixed(1).replace('.', ',');
+  openCard('<h2>Ginepro nano e uva ursina</h2><h3><i>Juniperus sibirica</i> · <i>Arctostaphylos uva-ursi</i> · km ' + km + '</h3>' +
+    '<p>Il cespuglio che strisciando copre i pendii alti del Velino: rami prostrati, aghi corti e pungenti, bacche blu-nere che maturano in due anni. Fra i suoi rami si infila l’uva ursina, un tappeto di foglioline lucide e bacche rosse, pianta delle tundre nordiche arrivata qui con le glaciazioni.</p>' +
+    '<table><tr><th>Dove</th><td>Una <b>fascia quasi continua</b> fra le praterie aride di quota 1.700 e le praterie alpine di quota 2.200, su tutto il versante sud-occidentale e meridionale del massiccio dal Monte Rozza al Cafornia; scende fino a 1.300 m solo sulle rotture di pendio delle faglie. È l’habitat più esteso e caratteristico della Riserva (8% del territorio).</td></tr>' +
+    '<tr><th>Habitat</th><td>«Lande alpine e boreali» (codice 4060 della Direttiva Habitat). Trattiene il suolo sui pendii più ripidi e dà riparo a coturnice, lepre e vipera dell’Orsini.</td></tr>' +
+    '<tr><th>In gara</th><td>È il «verde scuro» che vedi a lato del sentiero fra il Balcone sulla Val di Teve e la Capanna di Sevice, e di nuovo nella discesa dalla Selletta. Pungente: meglio restare sul sentiero.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità AM e DJ, <i>Carici humilis-Arctostaphyletum</i>, <i>Daphno-Juniperetum nanae</i>).</p>');
+}
+function schedaCamoscio(sS){
+  openCard('<h2>Camoscio appenninico</h2><h3><i>Rupicapra pyrenaica ornata</i> · sopra la Val di Teve</h3>' +
+    '<p>Il camoscio «più bello del mondo», come lo chiamano i naturalisti: più chiaro e con corna più lunghe del cugino alpino, d’inverno con una gola bianca e una gualdrappa scura. Endemico dell’Appennino centrale, nel Novecento era ridotto a poche decine di animali nel Parco d’Abruzzo.</p>' +
+    '<table><tr><th>Sul Velino</th><td>Non c’è ancora. Il <b>Piano di gestione della Riserva ne prevede la reintroduzione dal 2026 al 2030</b> (piano di rilascio già autorizzato dall’ISPRA), insieme al Parco Regionale Sirente Velino e a Rewilding Apennines. L’area di rilascio è la Val di Teve, fra Capo di Teve e Colle del Bicchero, che per questo verrà chiusa temporaneamente all’escursionismo.</td></tr>' +
+    '<tr><th>Perché qui</th><td>Praterie d’altitudine e rupi fra 1.500 e 2.400 m, come quelle che hai sotto i piedi dal Monte Rozza al Cafornia: l’habitat ideale, oggi senza il suo erbivoro di montagna.</td></tr>' +
+    '<tr><th>Numeri</th><td>Da circa 40 esemplari negli anni ’20 del Novecento a oltre 3.000 oggi, grazie alle reintroduzioni su Majella, Gran Sasso, Sibillini e Sirente. La Riserva conterà i piccoli nati ogni anno come indicatore del Piano.</td></tr>' +
+    '<tr><th>Se li incontri</th><td>Dal 2026 in poi, da lontano e in silenzio: in gara il tracciato resta sul crinale, la valle è la loro.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (azione 9, reintroduzione del camoscio appenninico); ISPRA.</p>');
+}
+function schedaVipera(sS){
+  const km = (sS / 1000).toFixed(1).replace('.', ',');
+  openCard('<h2>Vipera dell’Orsini</h2><h3><i>Vipera ursinii</i> · km ' + km + '</h3>' +
+    '<p>La vipera più piccola e più rara d’Europa: 40–50 cm, grigio-bruna con una banda scura a zig-zag sul dorso, testa stretta e sguardo mite. Vive solo sulle praterie d’altura dell’Appennino centrale e di pochi altri massicci europei.</p>' +
+    '<table><tr><th>Dove</th><td>Nella Riserva fra <b>1.650 e 2.200 m</b>, «con pochi e sporadici animali»: praterie con ginepro nano e sassi al sole, come questo versante. Si scalda sulle pietre la mattina e si nutre quasi solo di cavallette.</td></tr>' +
+    '<tr><th>È pericolosa?</th><td><b>No.</b> È schiva, morde solo se afferrata e il suo veleno è debole: non si conoscono casi gravi. Il pericolo, semmai, lo corre lei: è protetta in modo rigoroso dalla Direttiva Habitat e dalla Convenzione di Berna.</td></tr>' +
+    '<tr><th>Se la vedi</th><td>Fermati un attimo, guardala, lasciala andare. Non spostare i sassi e resta sul sentiero: le praterie a ginepro sono la sua casa.</td></tr>' +
+    '<tr><th>Perché conta</th><td>È una delle specie bandiera della Riserva: il suo stato di conservazione in Italia è giudicato cattivo e il Piano di gestione tutela tutta l’area potenzialmente adatta.</td></tr></table>' +
+    '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (checklist dei rettili, scheda <i>Vipera ursinii</i>).</p>');
+}
+// ---------- camosci: tre animali fermi sulle rupi del versante della Val di Teve, sotto il Balcone del Monte Rozza
+// (km 12,45-12,75, lato sinistro = nord). Modello Meshy riggato senza clip (posa in piedi), guarda verso -z.
+// Nel Piano di gestione la reintroduzione e' prevista dal 2026 in Val di Teve: li mostriamo dove arriveranno.
+async function buildCamosci(loader){
+  const g = await loadGLB(loader, 'assets/camoscio.glb?' + VER, () => {});
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.88; } } });
+  const bb = new THREE.Box3().setFromObject(g.scene), sz = bb.getSize(new THREE.Vector3());
+  const K = (route.lino_h || 7.8) / 1.7;
+  const sc = 1.25 * K / sz.y;                               // 1,25 m fino alla punta delle corna (un po' piu' grande del vero, come il cervo)
+  g.scene.position.set(-(bb.min.x + bb.max.x) / 2 * sc, -bb.min.y * sc, -(bb.min.z + bb.max.z) / 2 * sc);
+  g.scene.scale.setScalar(sc);
+  // [km, lato, distanza dal sentiero in m, rotazione extra]
+  const posti = [[12400, -1, 9, 0.6], [12550, -1, 14, -0.9], [12680, -1, 11, 2.4]];   // sul ciglio del crinale: oltre, il versante precipita e non si vedrebbero
+  for (const [sS, lato, dist, rot] of posti) {
+    posAt(sS, tmpA); tanAt(sS, tmpB);
+    const x = tmpA.x - tmpB.z * dist * K * lato, z = tmpA.z + tmpB.x * dist * K * lato;
+    let y = terraVera(x, z, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z);
+    const grp = new THREE.Group(); grp.name = 'Camoscio'; grp.add(g.scene.clone(true));
+    grp.position.set(x, y - 0.03, z);
+    grp.rotation.y = Math.atan2(tmpA.x - x, tmpA.z - z) + Math.PI + rot;   // il muso (-z) verso il sentiero, piu' un po' di caso
+    const h = 2, gx = (terraVera(x + h, z, y + 8) - terraVera(x - h, z, y + 8)) / (2 * h), gz = (terraVera(x, z + h, y + 8) - terraVera(x, z - h, y + 8)) / (2 * h);
+    if (Math.abs(gx) < 2 && Math.abs(gz) < 2) { const up = new THREE.Vector3(-gx, 1, -gz).normalize(); grp.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up)); }
+    rendiCliccabile(grp, 0.9 * K, 0.6 * K, schedaCamoscio, sS);
+    scene.add(grp);
+  }
+}
+// ---------- vipere dell'Orsini: due animali arrotolati al sole su un masso a bordo sentiero, fra i ginepri
+// (km 13,35 in salita e km 19,95 in discesa, 1.650-2.200 m). Modello Meshy statico, ridotto a 4.500 tris.
+async function buildVipere(loader){
+  const g = await loadGLB(loader, 'assets/vipera.glb?' + VER, () => {});
+  g.scene.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = true; o.frustumCulled = false; if (o.material) { o.material.metalness = 0; o.material.roughness = 0.8; o.material.color.setRGB(0.72, 0.68, 0.60); } } });   // piu' scura del masso
+  const bb = new THREE.Box3().setFromObject(g.scene), sz = bb.getSize(new THREE.Vector3());
+  const K = (route.lino_h || 7.8) / 1.7;
+  const sc = 0.5 * K / Math.max(sz.x, sz.z);                // spire larghe 50 cm (il vero e' 20-25: piu' grande per trovarla, come il cervo)
+  g.scene.position.set(-(bb.min.x + bb.max.x) / 2 * sc, -bb.min.y * sc, -(bb.min.z + bb.max.z) / 2 * sc);
+  g.scene.scale.setScalar(sc);
+  const rocciaGeo = geoRoccia(331, 2), rocciaMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, flatShading: true });
+  const posti = [[13350, 1, 2.3, 0.8], [19950, 1, 2.6, -1.4]];
+  for (const [sS, lato, dist, rot] of posti) {
+    posAt(sS, tmpA); tanAt(sS, tmpB);
+    const x = tmpA.x - tmpB.z * dist * K * lato, z = tmpA.z + tmpB.x * dist * K * lato;
+    let y = terraVera(x, z, tmpA.y + 8); if (y < -1e3) y = groundAt(x, z);
+    const grp = new THREE.Group(); grp.name = 'Vipera';
+    const rx = 0.55 * K, ry = 0.20 * K, rz = 0.47 * K;      // masso piatto 110 x 94 cm, alto 17 cm sopra terra (affondato per un terzo)
+    const roccia = new THREE.Mesh(rocciaGeo, rocciaMat); roccia.scale.set(rx, ry, rz); roccia.position.y = -ry * 0.35; roccia.castShadow = true; roccia.receiveShadow = true; grp.add(roccia);
+    const v = g.scene.clone(true); v.position.y = ry * 0.62; v.rotation.y = rot; grp.add(v);
+    grp.position.set(x, y, z);
+    const h = 1.2, gx = (terraVera(x + h, z, y + 8) - terraVera(x - h, z, y + 8)) / (2 * h), gz = (terraVera(x, z + h, y + 8) - terraVera(x, z - h, y + 8)) / (2 * h);
+    if (Math.abs(gx) < 2 && Math.abs(gz) < 2) { const up = new THREE.Vector3(-gx, 1, -gz).normalize(); grp.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up)); }
+    rendiCliccabile(grp, 0.55 * K, 0.2 * K, schedaVipera, sS);
+    scene.add(grp);
+  }
 }
 // ---------- coturnici: un gruppetto fermo sui pascoli sassosi sopra Passo Le Forche (km ~10,7) ----------
 // Il modello (semplificato, 6.000 triangoli) guarda verso +z e poggia su un sasso: si posa su terraVera,
