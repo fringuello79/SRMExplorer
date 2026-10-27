@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'v87b';
+const VER = 'v88';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -315,6 +315,17 @@ async function boot(){
         if (wn) poggia(wn);
       });
       poggia(lupoSrc);
+      // tutti i lupi nativi di scene.glb (Pratoni, Rozza, Bosco, ...) cliccabili: sfera di tocco in un gruppo a parte
+      // alla loro posizione nel mondo (cosi' la scala del modello non la deforma), km = punto del tracciato piu' vicino
+      const lupiNativi = []; world.scene.traverse(o => { if (/^Lupo/.test(o.name || '') && o !== l2 && o !== l3w) lupiNativi.push(o); });
+      for (const w of lupiNativi) {
+        w.updateMatrixWorld(true);
+        const bx = new THREE.Box3().setFromObject(w); if (bx.isEmpty()) continue;
+        const sz = bx.getSize(new THREE.Vector3()), c = bx.getCenter(new THREE.Vector3());
+        let km = 0, dm = 1e18; for (let i = 0; i < N; i += 3) { const d = (route.x[i] - c.x) ** 2 + (-route.y[i] - c.z) ** 2; if (d < dm) { dm = d; km = i / (N - 1) * TOT; } }
+        const hg = new THREE.Group(); hg.name = w.name + '_hit'; hg.position.set(c.x, bx.min.y, c.z); scene.add(hg);
+        rendiCliccabile(hg, Math.max(sz.x, sz.z) * 0.55, sz.y * 0.5, schedaLupo, Math.round(km));
+      }
       // il rifugio di Sevice era sospeso di quasi 3 m: si posa (regola poggia)
       if (SEVICE) poggia(SEVICE, -0.25);
       // suolo VERO campionato lungo tutto il tratto arco -> km 0, poi il tappeto verde
@@ -3623,7 +3634,7 @@ const NATURA_IDX = [
     ['Vipera dell’Orsini', 'Vipera ursinii', 13.35, () => schedaVipera(13350), 'la vipera più piccola d’Europa, innocua'],
     ['Fringuello alpino', 'Montifringilla nivalis', 14.66, () => schedaFringuello(14660), 'alla Capanna di Sevice'],
     ['Gracchio corallino', 'Pyrrhocorax pyrrhocorax', 17.9, () => schedaGracchio(), 'lo stormo sulla cresta Velino–Cafornia'],
-    ['Lupo appenninico', 'Canis lupus italicus', 11.89, () => schedaLupo(), 'sul crinale del Rozza; altri due ai Pratoni e alla discesa (km 21,65 e 25,6)'] ] },
+    ['Lupo appenninico', 'Canis lupus italicus', 11.89, () => schedaLupo(), 'il branco si incontra sei volte: km 5,4, 11,9, 12,6, 21,65, 25,6 e 26,3'] ] },
   { g: 'Con il grifone (tasto C per cambiare)', testo: [
     ['Grifone', 'Gyps fulvus', 'Il grande avvoltoio reintrodotto sul Velino dal 1994: oltre 2,5 m di apertura alare, colonie sulle pareti della Riserva, decine di coppie nidificanti. Lo guidi tu, dal pulsante GRIFONE.'],
     ['Aquila reale', 'Aquila chrysaetos', 'Una o due coppie sul massiccio; caccia lepri e marmotte… qui soprattutto lepri, sulle praterie d’altura.'],
