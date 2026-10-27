@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'v88';
+const VER = 'v89';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -1374,16 +1374,84 @@ function drawMiniPos(){
 }
 
 // ---------- UI ----------
+// Visuali: follow = terza persona (default) · orbit = orbitale, la camera resta ferma e segue con lo sguardo
+// · fpv = prima persona · top = dall'alto, tutto il percorso inquadrato con il puntino che si muove.
+// 'free' e' la visuale libera che nasce trascinando: alla prima pressione di una freccia si torna a seguire.
+const VISTE = ['follow', 'orbit', 'fpv', 'top'];
+const VISTE_NOME = { follow: '3ª PERSONA', free: 'LIBERA', orbit: 'ORBITALE', fpv: '1ª PERSONA', top: 'DALL’ALTO' };
+let TOP = null;        // overlay della vista dall'alto: nastro evidenziato + puntino
 function setView(v){
+  const prima = st.view;
   st.view = v; st.follow = (v === 'follow');
   $('b-seg').classList.toggle('on', v === 'follow');
-  const bp = $('b-pov'); if (bp) bp.classList.toggle('on', v === 'fpv');
-  if (controls) controls.enabled = (v !== 'fpv');
+  const bp = $('b-pov'); if (bp) { bp.classList.toggle('on', v !== 'follow' && v !== 'free'); bp.textContent = 'VISUALE: ' + VISTE_NOME[v]; }
+  if (controls) controls.enabled = (v !== 'fpv' && v !== 'top');
   if (lino) lino.visible = (v !== 'fpv');
+  if (v === 'top' && prima !== 'top') {
+    if (!TOP) { try { buildTop(); } catch (e) { console.warn('vista dall\'alto:', e); } }
+    if (TOP) { TOP.grp.visible = true; TOP.fogFar = scene.fog.far; TOP.fogNear = scene.fog.near; TOP.t0 = performance.now(); }
+    applicaQualita(QUAL.liv);
+  } else if (prima === 'top' && v !== 'top') {
+    if (TOP) { TOP.grp.visible = false; }
+    applicaQualita(QUAL.liv); scene.fog.near = 2400;   // ripristina ombre, flora minuta e nebbia
+    camera.up.set(0, 1, 0); camera.fov = 55; camera.updateProjectionMatrix();
+    if (v !== 'fpv') { posAt(st.s, tmpA); tanAt(st.s + 8, tmpC); camera.position.copy(tmpA).addScaledVector(tmpC, -90); camera.position.y += 50; camTgt.copy(tmpA); controls.target.copy(camTgt); }
+  }
 }
+function cicloVista(){ const i = VISTE.indexOf(st.view); setView(VISTE[(i < 0 ? 0 : i + 1) % VISTE.length]); }
 function setFollow(v, fromUser){ setView(v ? 'follow' : 'free'); }
+// alla ripartenza dopo aver guardato intorno (trascinando) la camera torna a seguire il personaggio
+function riprendiSeguito(){ if (st.view === 'free') setView('follow'); }
+// ---- vista dall'alto: il tracciato evidenziato (nastro largo arancione con bordo scuro, sempre in primo piano)
+// e un puntino pulsante sul personaggio; la camera sta sopra il centro del giro, nord in alto (o est in alto
+// sugli schermi verticali, cosi' il lato lungo del percorso riempie lo schermo)
+function buildTop(){
+  const K = (route.lino_h || 7.8) / 1.7;
+  const grp = new THREE.Group(); grp.name = 'VistaAlto'; grp.visible = false;
+  const nastro = (w, col, op, ord) => {
+    const pos = [], idx = [], step = 3; let n = 0;
+    for (let i = 0; i < N; i += step) {
+      const j = Math.min(i + step, N - 1);
+      let tx = route.x[j] - route.x[i], tz = -route.y[j] + route.y[i]; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
+      const y = (YT ? YT[i] : route.z[i]) + 15;
+      pos.push(route.x[i] - tz * w, y, -route.y[i] + tx * w, route.x[i] + tz * w, y, -route.y[i] - tx * w);
+      if (n > 0) idx.push(2 * n - 2, 2 * n - 1, 2 * n, 2 * n - 1, 2 * n + 1, 2 * n);
+      n++;
+    }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
+    const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: op, depthTest: false, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+    m.renderOrder = ord; m.frustumCulled = false; return m;
+  };
+  grp.add(nastro(9 * K, 0x1d1206, 0.75, 30), nastro(5.5 * K, 0xf4951f, 0.98, 31));
+  // puntino: disco arancione con bordo bianco e alone
+  const cv = document.createElement('canvas'); cv.width = cv.height = 128; const c = cv.getContext('2d');
+  const gr = c.createRadialGradient(64, 64, 20, 64, 64, 64); gr.addColorStop(0, 'rgba(244,149,31,0.55)'); gr.addColorStop(1, 'rgba(244,149,31,0)'); c.fillStyle = gr; c.fillRect(0, 0, 128, 128);
+  c.beginPath(); c.arc(64, 64, 24, 0, 6.3); c.fillStyle = '#fff6e6'; c.fill(); c.beginPath(); c.arc(64, 64, 18, 0, 6.3); c.fillStyle = '#f4951f'; c.fill();
+  const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace;
+  const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false, transparent: true, fog: false })); dot.renderOrder = 32; grp.add(dot);
+  // inquadratura: rettangolo del tracciato con margine
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, ymax = -1e9;
+  for (let i = 0; i < N; i++) { x0 = Math.min(x0, route.x[i]); x1 = Math.max(x1, route.x[i]); z0 = Math.min(z0, -route.y[i]); z1 = Math.max(z1, -route.y[i]); ymax = Math.max(ymax, route.z[i]); }
+  scene.add(grp);
+  TOP = { grp, dot, cx: (x0 + x1) / 2, cz: (z0 + z1) / 2, dx: (x1 - x0) * 1.12 + 600, dz: (z1 - z0) * 1.12 + 600, ymax, K };
+}
+function tickTop(dt){
+  if (!TOP) return;
+  const asp = camera.aspect, fov = 50;
+  // nord in alto se lo schermo e' largo, est in alto se e' alto: il lato lungo del giro lungo il lato lungo dello schermo
+  const estSu = asp < 1;
+  const larg = estSu ? TOP.dz : TOP.dx, alt = estSu ? TOP.dx : TOP.dz;
+  const H = Math.max(larg / asp, alt) * 0.5 / Math.tan(fov / 2 * Math.PI / 180) + TOP.ymax;
+  camera.fov = fov; camera.updateProjectionMatrix();
+  camera.up.set(estSu ? 1 : 0, 0, estSu ? 0 : -1);
+  camera.position.set(TOP.cx, H, TOP.cz + 0.01);
+  camera.lookAt(TOP.cx, 0, TOP.cz);
+  const s = (0.011 + 0.0025 * Math.sin(performance.now() / 250)) * H;   // il puntino resta ~1,4% dell'altezza di volo, pulsante
+  TOP.dot.scale.set(s, s, 1);
+  TOP.dot.position.set(tmpA.x, tmpA.y + 20, tmpA.z);
+}
 function hold(btn, dir){
-  const on = e => { e.preventDefault(); st.dir = dir; };
+  const on = e => { e.preventDefault(); st.dir = dir; riprendiSeguito(); };
   const off = () => { if (st.dir === dir) st.dir = 0; };
   btn.addEventListener('pointerdown', on);
   addEventListener('pointerup', off);
@@ -1393,7 +1461,7 @@ function hold(btn, dir){
 function bindUI(){
   hold($('b-avt'), 1); hold($('b-ind'), -1);
   $('b-seg').onclick = () => setView('follow');
-  const bp = $('b-pov'); if (bp) bp.onclick = () => setView(st.view === 'fpv' ? 'follow' : 'fpv');
+  const bp = $('b-pov'); if (bp) { bp.onclick = cicloVista; bp.textContent = 'VISUALE: ' + VISTE_NOME[st.view]; }
   $('b-help').onclick = showHelp;
   $('b-gara').onclick = showGara;
   { const bn = $('b-nat'); if (bn) bn.onclick = showNatura; }
@@ -1420,6 +1488,7 @@ function bindUI(){
     else if (k === 'ArrowLeft' || k === 'a' || k === 'A') { down ? st.keys.add('L') : st.keys.delete('L'); e.preventDefault(); }
     else if (k === 'Escape' && down) closeModal();
     st.dir = st.keys.has('R') ? 1 : (st.keys.has('L') ? -1 : 0);
+    if (st.dir) riprendiSeguito();
   };
   addEventListener('keydown', e => key(e, true));
   addEventListener('keyup', e => key(e, false));
@@ -1479,7 +1548,8 @@ function showHelp(){
   openCard('<h2>Come si esplora</h2><h3>SRM Explorer</h3><ul>' +
     '<li><b>▶ / ◀</b> (o frecce della tastiera): Lino avanza e torna indietro lungo il percorso; tieni premuto per correre.</li>' +
     '<li><b>Trascina</b> con un dito o col mouse per girare intorno a Lino; <b>pizzica</b> o rotella per lo zoom.</li>' +
-    '<li><b>SEGUI LINO</b> riaggancia la telecamera dietro di lui.</li>' +
+    '<li><b>SEGUI LINO</b> riaggancia la telecamera dietro di lui; se hai guardato intorno trascinando, basta ripartire con una freccia.</li>' +
+    '<li><b>VISUALE</b> cambia inquadratura a rotazione: terza persona, <b>orbitale</b> (la camera resta ferma e lo segue con lo sguardo), <b>prima persona</b>, <b>dall’alto</b> (tutto il giro in un colpo d’occhio, con il puntino che si muove sul tracciato).</li>' +
     '<li>Il <b>profilo altimetrico</b> in basso è cliccabile: tocca un punto e Lino si posizioner\u00e0 su di esso.</li>' +
     '<li>Tocca i <b>segnaposto</b> lungo il percorso per le schede dei punti di interesse.</li>' +
     '<li>La barra in alto dice sempre <b>dove sei</b>: zona, km, quota e numero del sentiero.</li>' +
@@ -1888,7 +1958,8 @@ function applicaQualita(l){
   applicaRisoluzione();
   if (sunLight) {
     // in volo la camera e' alta e le ombre si vedono poco: mappa al massimo 1024 (meno riempimento per frame)
-    const px = FLY.on ? Math.min(OMBRA_PX[l], 1024) : OMBRA_PX[l];
+    const alto = FLY.on || st.view === 'top';   // in volo e dall'alto: ombre leggere, flora minuta nascosta
+    const px = alto ? Math.min(OMBRA_PX[l], 1024) : OMBRA_PX[l];
     if (sunLight.shadow.mapSize.x !== px) {
       sunLight.shadow.mapSize.set(px, px);
       if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }   // si ricrea alla prossima resa
@@ -1896,12 +1967,12 @@ function applicaQualita(l){
     sunLight.castShadow = true;
     ombraHalf = -1; inquadraOmbre(430);
   }
-  const fr = [0.55, 0.8, 1, 1][l] * (FLY.on && QUAL.mob ? 0.8 : 1);
+  const fr = [0.55, 0.8, 1, 1][l] * ((FLY.on || st.view === 'top') && QUAL.mob ? 0.8 : 1);
   for (const v of VEG_IM) v.im.count = Math.max(1, Math.round(v.n * fr));
   for (let i = 0; i < NUVOLE.length; i++) NUVOLE[i].visible = l > 0 || i % 2 === 0;
   // la flora minuta (cuscini, adonidi, genziane, sassi) da quota di volo non si distingue: fuori dalla scena
-  for (const im of IMPOSTORS) if (im.userData.piccola) { im.visible = !FLY.on; if (im.userData.rocce) im.userData.rocce.visible = !FLY.on; }
-  if (scene && scene.fog) scene.fog.far = FLY.on ? FOG_VOLO[l] : (l === 0 ? 11000 : 18000);
+  { const vis = !(FLY.on || st.view === 'top'); for (const im of IMPOSTORS) if (im.userData.piccola) { im.visible = vis; if (im.userData.rocce) im.userData.rocce.visible = vis; } }
+  if (scene && scene.fog) { if (st.view === 'top' && !FLY.on) { scene.fog.near = 60000; scene.fog.far = 90000; } else scene.fog.far = FLY.on ? FOG_VOLO[l] : (l === 0 ? 11000 : 18000); }
   console.log('qualita\':', ['essenziale', 'media', 'alta', 'massima'][l], 'risoluzione', QUAL.res.toFixed(2), QUAL.cap30 ? '30 fps' : '');
 }
 // risoluzione di resa = pixel ratio di base x fattore QUAL.res (0,75-1). Sul telefono la base e' 2 (o il
@@ -4341,6 +4412,7 @@ function buildSkirt(){
 const GRIF_MESH_YAW = 0;   // orientamento del modello Meshy rispetto alla prua (+z del gruppo)
 
 function flyStart(){
+  if (st.view === 'top' || st.view === 'fpv') setView('follow');   // in volo si parte dalla vista normale (nebbia e camera coerenti)
   if (HG2) { FC.BC = [(HG2.x0 + HG2.x1) / 2, -(HG2.y0 + HG2.y1) / 2]; FC.BR = [(HG2.x1 - HG2.x0) / 2 - 1500, (HG2.y1 - HG2.y0) / 2 - 1500]; }
   if (!grifTpl) { openCard('<h2>Grifone assente</h2><p>Il modello del grifone non è nella scena.</p>'); return; }
   buildGrifone();
@@ -5532,6 +5604,7 @@ function tick(){
   // camera
   tanAt(st.s + 8, tmpC);
   if (window.SRMX && window.SRMX.freeze) { /* camera bloccata per i collaudi */ }
+  else if (st.view === 'top') { tickTop(dt); }
   else if (st.view === 'fpv') {
     tmpD.copy(tmpA).addScaledVector(tmpC, 2.5); tmpD.y += 8.8;
     // NIENTE clamp suolo in prima persona: groundAt (griglia coarse) sta
@@ -5555,7 +5628,7 @@ function tick(){
     }
     controls.update();
   }
-  if (st.view !== 'fpv' && !(window.SRMX && window.SRMX.freeze)) {
+  if (st.view !== 'fpv' && st.view !== 'top' && !(window.SRMX && window.SRMX.freeze)) {
     const gmin = groundAt(camera.position.x, camera.position.z) + 13;
     if (camera.position.y < gmin) camera.position.y = gmin;
   }
