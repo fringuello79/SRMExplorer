@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'v89';
+const VER = 'v90';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -60,7 +60,7 @@ const AVATARS = [
       ['1° ASSOLUTO', '3h 28’ 31” · 6’57” al km', 0.50, 0.14],
       ['+4’ 42” SUL SECONDO', 'Domenico Volpe', 0.50, 0.60],
       ['1° ATRS 2026', 'Abruzzo Trail Run Series, generale', 0.50, 0.82] ] },
-  { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', breve: 'FEDERICA', attivo: true, glb: 'vincitrice.glb', giro: 'vincitrice_giro', rotY: Math.PI / 2,
+  { id: 'vincitrice', nome: 'Vincitrice<br>SRM 2026', breve: 'FEDE', attivo: true, glb: 'vincitrice.glb', giro: 'vincitrice_giro', rotY: Math.PI / 2,
     titolo: 'VINCITRICE SRM 2026', sotto: 'Federica Pelosi · 4h 03’ 55”', tags: [
       ['PETTORALE 181', 'Skyrace del Maglio 2026', 0.50, 0.42],
       ['1ª ASSOLUTA', '4h 03’ 55” · 8’08” al km', 0.50, 0.14],
@@ -1378,13 +1378,13 @@ function drawMiniPos(){
 // · fpv = prima persona · top = dall'alto, tutto il percorso inquadrato con il puntino che si muove.
 // 'free' e' la visuale libera che nasce trascinando: alla prima pressione di una freccia si torna a seguire.
 const VISTE = ['follow', 'orbit', 'fpv', 'top'];
-const VISTE_NOME = { follow: '3ª PERSONA', free: 'LIBERA', orbit: 'ORBITALE', fpv: '1ª PERSONA', top: 'DALL’ALTO' };
+const VISTE_NOME = { follow: 'VISTA 1', free: 'VISTA 1', orbit: 'VISTA 2', fpv: 'VISTA 3', top: 'VISTA 4' };   // 1 terza persona · 2 orbitale · 3 prima persona · 4 dall'alto
 let TOP = null;        // overlay della vista dall'alto: nastro evidenziato + puntino
 function setView(v){
   const prima = st.view;
   st.view = v; st.follow = (v === 'follow');
   $('b-seg').classList.toggle('on', v === 'follow');
-  const bp = $('b-pov'); if (bp) { bp.classList.toggle('on', v !== 'follow' && v !== 'free'); bp.textContent = 'VISUALE: ' + VISTE_NOME[v]; }
+  const bp = $('b-pov'); if (bp) { bp.classList.toggle('on', v !== 'follow' && v !== 'free'); bp.textContent = VISTE_NOME[v]; }
   if (controls) controls.enabled = (v !== 'fpv' && v !== 'top');
   if (lino) lino.visible = (v !== 'fpv');
   if (v === 'top' && prima !== 'top') {
@@ -1446,7 +1446,7 @@ function tickTop(dt){
   camera.up.set(estSu ? 1 : 0, 0, estSu ? 0 : -1);
   camera.position.set(TOP.cx, H, TOP.cz + 0.01);
   camera.lookAt(TOP.cx, 0, TOP.cz);
-  const s = (0.011 + 0.0025 * Math.sin(performance.now() / 250)) * H;   // il puntino resta ~1,4% dell'altezza di volo, pulsante
+  const s = (0.024 + 0.005 * Math.sin(performance.now() / 250)) * H;   // il puntino: ~3% dell'altezza di volo, pulsante
   TOP.dot.scale.set(s, s, 1);
   TOP.dot.position.set(tmpA.x, tmpA.y + 20, tmpA.z);
 }
@@ -1461,7 +1461,7 @@ function hold(btn, dir){
 function bindUI(){
   hold($('b-avt'), 1); hold($('b-ind'), -1);
   $('b-seg').onclick = () => setView('follow');
-  const bp = $('b-pov'); if (bp) { bp.onclick = cicloVista; bp.textContent = 'VISUALE: ' + VISTE_NOME[st.view]; }
+  const bp = $('b-pov'); if (bp) { bp.onclick = cicloVista; bp.textContent = VISTE_NOME[st.view]; }
   $('b-help').onclick = showHelp;
   $('b-gara').onclick = showGara;
   { const bn = $('b-nat'); if (bn) bn.onclick = showNatura; }
@@ -1492,6 +1492,16 @@ function bindUI(){
   };
   addEventListener('keydown', e => key(e, true));
   addEventListener('keyup', e => key(e, false));
+}
+// ---- foto nelle schede: assets/foto/<id>.jpg (facoltative). Se il file manca la figura sparisce da sola
+// (onerror); un tocco la ingrandisce. Crediti in FOTO_CREDITI (autore / licenza), mostrati sotto la foto.
+const FOTO_CREDITI = {
+  // adonide: 'foto M. Rossi', genziana: 'foto Wikimedia Commons · CC BY-SA', ...
+};
+function fotoHTML(id){
+  const cr = FOTO_CREDITI[id] || '';
+  return '<figure class="foto" onclick="this.classList.toggle(\'grande\')"><img src="assets/foto/' + id + '.jpg?' + VER + '" alt="" loading="lazy" onerror="this.closest(\'figure\').style.display=\'none\'">' +
+    (cr ? '<figcaption>' + cr + '</figcaption>' : '') + '</figure>';
 }
 function openCard(html){
   try {
@@ -1549,7 +1559,7 @@ function showHelp(){
     '<li><b>▶ / ◀</b> (o frecce della tastiera): Lino avanza e torna indietro lungo il percorso; tieni premuto per correre.</li>' +
     '<li><b>Trascina</b> con un dito o col mouse per girare intorno a Lino; <b>pizzica</b> o rotella per lo zoom.</li>' +
     '<li><b>SEGUI LINO</b> riaggancia la telecamera dietro di lui; se hai guardato intorno trascinando, basta ripartire con una freccia.</li>' +
-    '<li><b>VISUALE</b> cambia inquadratura a rotazione: terza persona, <b>orbitale</b> (la camera resta ferma e lo segue con lo sguardo), <b>prima persona</b>, <b>dall’alto</b> (tutto il giro in un colpo d’occhio, con il puntino che si muove sul tracciato).</li>' +
+    '<li><b>VISTA 1-2-3-4</b> cambia inquadratura a rotazione: terza persona, <b>orbitale</b> (la camera resta ferma e lo segue con lo sguardo), <b>prima persona</b>, <b>dall’alto</b> (tutto il giro in un colpo d’occhio, con il puntino che si muove sul tracciato).</li>' +
     '<li>Il <b>profilo altimetrico</b> in basso è cliccabile: tocca un punto e Lino si posizioner\u00e0 su di esso.</li>' +
     '<li>Tocca i <b>segnaposto</b> lungo il percorso per le schede dei punti di interesse.</li>' +
     '<li>La barra in alto dice sempre <b>dove sei</b>: zona, km, quota e numero del sentiero.</li>' +
@@ -2976,7 +2986,7 @@ function rendiCliccabile(grp, r, h, scheda, sS){
   return hit;
 }
 function schedaLupo(){
-  openCard('<h2>Lupo appenninico</h2><h3><i>Canis lupus italicus</i> · Pratoni di Massa d’Albe</h3>' +
+  openCard(fotoHTML('lupo') + '<h2>Lupo appenninico</h2><h3><i>Canis lupus italicus</i> · Pratoni di Massa d’Albe</h3>' +
     '<p>Il grande predatore del Velino: più piccolo e snello del lupo delle Alpi, mantello grigio-fulvo con le tipiche bande nere sulle zampe anteriori. Vive in branchi familiari di 4–7 animali e si muove soprattutto all’alba e al crepuscolo; di giorno è quasi impossibile vederlo, ma le sue tracce sui sentieri fangosi e le fatte sulle creste sono frequenti.</p>' +
     '<table><tr><th>Dove</th><td>Tutto il massiccio, dalle faggete ai pascoli d’altura: i valloni laterali della Riserva e i pratoni fra Massa d’Albe e Fonte Canale sono zone di caccia abituali.</td></tr>' +
     '<tr><th>Di cosa vive</th><td>Soprattutto cinghiali, caprioli e cervi, che il ritorno della fauna ha reso di nuovo abbondanti; raramente bestiame, protetto dai cani da guardiania.</td></tr>' +
@@ -2985,7 +2995,7 @@ function schedaLupo(){
     '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonte: Guida naturalistica SRM 2026; Riserva Naturale Monte Velino.</p>');
 }
 function schedaCervoStatico(){
-  openCard('<h2>Cervo nobile</h2><h3><i>Cervus elaphus</i> · bosco di Valle Porclaneta</h3>' +
+  openCard(fotoHTML('cervo') + '<h2>Cervo nobile</h2><h3><i>Cervus elaphus</i> · bosco di Valle Porclaneta</h3>' +
     '<p>Il più grande erbivoro del Velino: un maschio adulto pesa fino a 200 kg e porta palchi che rinnova ogni anno. In ottobre siamo alla fine del <b>bramito</b>: nelle sere di fine settembre e inizio ottobre i maschi ruggiscono dalle radure per contendersi le femmine, e il suono arriva fino al paese.</p>' +
     '<table><tr><th>Dove</th><td>Faggete e margini dei boschi di Valle Porclaneta e dei valloni, pascoli alti all’alba e al tramonto; d’inverno scende verso i fondovalle.</td></tr>' +
     '<tr><th>Storia</th><td>Scomparso dall’Appennino centrale nell’Ottocento, è stato reintrodotto in Abruzzo a partire dagli anni ’70; dal Parco Nazionale e dal Sirente ha ricolonizzato il Velino, dove oggi la popolazione è stabile.</td></tr>' +
@@ -3402,7 +3412,7 @@ function schedaPioppo(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
   const dove = sS > 20000 ? 'Qui, nella grande discesa, il Piano di gestione censisce nove boschetti alla giunzione fra Valle Majelama e Valle della Genzana, fra 1.400 e 1.600 m, a contatto con i noccioleti e con i ghiaioni.'
                          : 'Qui, sotto la scarpata di faglia del versante sud-occidentale del Velino, il Piano di gestione censisce quattro boschetti fra 1.200 e 1.300 m, in contatto con le praterie secondarie.';
-  openCard('<h2>Pioppo tremulo</h2><h3><i>Populus tremula</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('pioppo') + '<h2>Pioppo tremulo</h2><h3><i>Populus tremula</i> · km ' + km + '</h3>' +
     '<p>L’albero che «trema»: il picciolo delle foglie è appiattito e basta un filo d’aria perché tutta la chioma frusci e scintilli. In ottobre vira a un <b>giallo intenso</b>, inconfondibile anche di corsa; la corteccia è liscia e grigio-verde. Sul Velino resta basso, da 6 a 10 m.</p>' +
     '<table><tr><th>Dove</th><td>Boschetti frammentari e minuscoli (in tutta la Riserva appena un ettaro, lo 0,2% del territorio), fra 1.200 e 1.700 m, su versanti esposti a sud dove accumuli argillosi trattengono l’acqua: il pioppo tradisce l’umidità nel suolo. ' + dove + '</td></tr>' +
     '<tr><th>Compagni</th><td>Nocciolo, sorbo montano e viburno nello strato arbustivo; sotto, sigillo di Salomone, rosa canina e l’orchidea <i>Cephalanthera damasonium</i>.</td></tr>' +
@@ -3445,14 +3455,14 @@ function buildSassiCresta(){
   console.log('sassi di cresta:', posti.length);
 }
 function schedaRoverella(){
-  openCard('<h2>Roverella</h2><h3><i>Quercus pubescens</i> · querceto termofilo</h3>' +
+  openCard(fotoHTML('roverella') + '<h2>Roverella</h2><h3><i>Quercus pubescens</i> · querceto termofilo</h3>' +
     '<p>La quercia dei versanti caldi e assolati: bassa, tozza, con foglie lobate vellutate di sotto che a metà ottobre virano dal verde oliva all’ocra e al bruno e restano sui rami secche fino all’inverno. Con lei orniello e citiso, e nelle radure i prati aridi ricchi di orchidee.</p>' +
     '<table><tr><th>Dove</th><td>Sul Velino i querceti di roverella sopravvivono in pochi lembi: il versante sud-occidentale del Monte Rozza fino a 1.200 m, strisce nei valloni esposti a sud e il bosco di Valle Porclaneta. Le colline verso Rosciolo alternano boschetti, campi e carrarecce.</td></tr>' +
     '<tr><th>Perché conta</th><td>Habitat prioritario europeo 91AA* (boschi orientali di quercia bianca), fra i più fragili del massiccio: formatosi solo 5–10.000 anni fa e in gran parte distrutto dall’uomo dal Medioevo. Il tracciato lo lambisce a monte di Passo Le Forche senza mai attraversarlo.</td></tr></table>' +
     '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino; Guida naturalistica SRM 2026.</p>');
 }
 function schedaBoscaglia(){
-  openCard('<h2>Boscaglie fresche di fondovalle</h2><h3>nocciolo, faggio, pioppo tremulo · Valle Majelama</h3>' +
+  openCard(fotoHTML('faggio') + '<h2>Boscaglie fresche di fondovalle</h2><h3>nocciolo, faggio, pioppo tremulo · Valle Majelama</h3>' +
     '<p>Nelle conche fresche e sul fondo della Valle Majelama, dove il suolo trattiene l’acqua, crescono boscaglie di <b>nocciolo</b> con pioppo tremulo e, nei punti più freschi, lembi di <b>faggeta</b>. A ottobre sono la macchia di colore della discesa: rame, arancio e giallo contro i pascoli già spenti.</p>' +
     '<table><tr><th>Dove</th><td>Fondovalle di Valle Majelama fra 1.400 e 1.700 m, a contatto con i ghiaioni e con le praterie; l’unica vera foresta di faggio del massiccio è invece nella Val di Teve, oltre la cresta.</td></tr>' +
     '<tr><th>Per chi corre</th><td>Fondo umido anche con il sole, radici e foglie bagnate: il tratto più scivoloso della grande discesa.</td></tr></table>' +
@@ -3460,7 +3470,7 @@ function schedaBoscaglia(){
 }
 function schedaSilene(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Silene a cuscinetto</h2><h3><i>Silene acaulis</i> subsp. <i>cenisia</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('silene') + '<h2>Silene a cuscinetto</h2><h3><i>Silene acaulis</i> subsp. <i>cenisia</i> · km ' + km + '</h3>' +
     '<p>Un cuscino compattissimo di foglioline, largo una mano e alto due dita, che si stringe su sé stesso per resistere a gelo e vento. <b>Fiorisce fra giugno e luglio</b>, quando si copre di piccoli fiori rosa-viola: qui la vedi in fiore per riconoscerla, ma a ottobre è solo un cuscino verde fra i sassi.</p>' +
     '<table><tr><th>Dove</th><td>Solo nella zona sommitale del massiccio: vette di Velino, Cafornia e Sevice e creste fra di esse, fra 2.100 e 2.480 m (il Velino è l’unico massiccio dove scende sotto i 2.300). Su pendii poco inclinati esposti a nord-ovest e spazzati dal vento, fra i clasti della roccia spaccata dal gelo: un chilometro quadrato in tutto. Insieme a lei la <i>Saxifraga speciosa</i>.</td></tr>' +
     '<tr><th>Tundra</th><td>È un relitto delle glaciazioni di 500.000 anni fa: suolo gelato otto mesi l’anno, gelate notturne tutto l’anno, copertura vegetale dal 10 al 40%. L’ambiente più freddo del Velino (habitat 8240*, pavimenti calcarei, prioritario).</td></tr>' +
@@ -3470,7 +3480,7 @@ function schedaSilene(sS){
 }
 function schedaGinepro(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Ginepro nano e uva ursina</h2><h3><i>Juniperus sibirica</i> · <i>Arctostaphylos uva-ursi</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('ginepro') + '<h2>Ginepro nano e uva ursina</h2><h3><i>Juniperus sibirica</i> · <i>Arctostaphylos uva-ursi</i> · km ' + km + '</h3>' +
     '<p>Il cespuglio che strisciando copre i pendii alti del Velino: rami prostrati, aghi corti e pungenti, bacche blu-nere che maturano in due anni. Fra i suoi rami si infila l’uva ursina, un tappeto di foglioline lucide e bacche rosse, pianta delle tundre nordiche arrivata qui con le glaciazioni.</p>' +
     '<table><tr><th>Dove</th><td>Una <b>fascia quasi continua</b> fra le praterie aride di quota 1.700 e le praterie alpine di quota 2.200, su tutto il versante sud-occidentale e meridionale del massiccio dal Monte Rozza al Cafornia; scende fino a 1.300 m solo sulle rotture di pendio delle faglie. È l’habitat più esteso e caratteristico della Riserva (8% del territorio).</td></tr>' +
     '<tr><th>Habitat</th><td>«Lande alpine e boreali» (codice 4060 della Direttiva Habitat). Trattiene il suolo sui pendii più ripidi e dà riparo a coturnice, lepre e vipera dell’Orsini.</td></tr>' +
@@ -3478,7 +3488,7 @@ function schedaGinepro(sS){
     '<p style="margin-top:8px;color:var(--grigio);font-size:12px">Fonti: Piano di gestione della Riserva Naturale Orientata Monte Velino (unità AM e DJ, <i>Carici humilis-Arctostaphyletum</i>, <i>Daphno-Juniperetum nanae</i>).</p>');
 }
 function schedaCamoscio(sS){
-  openCard('<h2>Camoscio appenninico</h2><h3><i>Rupicapra pyrenaica ornata</i> · sopra la Val di Teve</h3>' +
+  openCard(fotoHTML('camoscio') + '<h2>Camoscio appenninico</h2><h3><i>Rupicapra pyrenaica ornata</i> · sopra la Val di Teve</h3>' +
     '<p>Il camoscio «più bello del mondo», come lo chiamano i naturalisti: più chiaro e con corna più lunghe del cugino alpino, d’inverno con una gola bianca e una gualdrappa scura. Endemico dell’Appennino centrale, nel Novecento era ridotto a poche decine di animali nel Parco d’Abruzzo.</p>' +
     '<table><tr><th>Sul Velino</th><td>Non c’è ancora. Il <b>Piano di gestione della Riserva ne prevede la reintroduzione dal 2026 al 2030</b> (piano di rilascio già autorizzato dall’ISPRA), insieme al Parco Regionale Sirente Velino e a Rewilding Apennines. L’area di rilascio è la Val di Teve, fra Capo di Teve e Colle del Bicchero, che per questo verrà chiusa temporaneamente all’escursionismo.</td></tr>' +
     '<tr><th>Perché qui</th><td>Praterie d’altitudine e rupi fra 1.500 e 2.400 m, come quelle che hai sotto i piedi dal Monte Rozza al Cafornia: l’habitat ideale, oggi senza il suo erbivoro di montagna.</td></tr>' +
@@ -3488,7 +3498,7 @@ function schedaCamoscio(sS){
 }
 function schedaVipera(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Vipera dell’Orsini</h2><h3><i>Vipera ursinii</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('vipera') + '<h2>Vipera dell’Orsini</h2><h3><i>Vipera ursinii</i> · km ' + km + '</h3>' +
     '<p>La vipera più piccola e più rara d’Europa: 40–50 cm, grigio-bruna con una banda scura a zig-zag sul dorso, testa stretta e sguardo mite. Vive solo sulle praterie d’altura dell’Appennino centrale e di pochi altri massicci europei.</p>' +
     '<table><tr><th>Dove</th><td>Nella Riserva fra <b>1.650 e 2.200 m</b>, «con pochi e sporadici animali»: praterie con ginepro nano e sassi al sole, come questo versante. Si scalda sulle pietre la mattina e si nutre quasi solo di cavallette.</td></tr>' +
     '<tr><th>È pericolosa?</th><td><b>No.</b> È schiva, morde solo se afferrata e il suo veleno è debole: non si conoscono casi gravi. Il pericolo, semmai, lo corre lei: è protetta in modo rigoroso dalla Direttiva Habitat e dalla Convenzione di Berna.</td></tr>' +
@@ -3599,7 +3609,7 @@ async function buildFringuelli(loader){
 }
 function schedaFringuello(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Fringuello alpino</h2><h3><i>Montifringilla nivalis</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('fringuello') + '<h2>Fringuello alpino</h2><h3><i>Montifringilla nivalis</i> · km ' + km + '</h3>' +
     '<p>Un passero robusto delle alte quote, grigio in testa, bruno sul dorso e con le ali bianche e nere che lampeggiano in volo. Vive tutto l’anno sopra il limite degli alberi, nidifica nelle fessure delle rocce e d’inverno scende appena di quota, mai in pianura.</p>' +
     '<table><tr><th>Dove</th><td>Creste, pietraie e praterie sommitali del Velino, fra i 1.900 e i 2.480 m. È nella checklist degli uccelli della Riserva.</td></tr>' +
     '<tr><th>Abitudini</th><td>Poco timoroso: attorno ai rifugi e ai punti di sosta si avvicina a raccogliere le briciole. Alla Capanna di Sevice, durante il ristoro, è lui che ti guarda da un sasso. Cerca semi e insetti sulla neve in fusione e sui ghiaioni.</td></tr>' +
@@ -3658,7 +3668,7 @@ function tickGracchi(dt){
   }
 }
 function schedaGracchio(){
-  openCard('<h2>Gracchio corallino</h2><h3><i>Pyrrhocorax pyrrhocorax</i> · cresta Velino–Cafornia</h3>' +
+  openCard(fotoHTML('gracchio') + '<h2>Gracchio corallino</h2><h3><i>Pyrrhocorax pyrrhocorax</i> · cresta Velino–Cafornia</h3>' +
     '<p>Il corvo delle vette: nero lucido, becco lungo e ricurvo rosso corallo, zampe rosse. Vola in stormi rumorosi che giocano col vento lungo le creste, con picchiate, capovolte e richiami squillanti («kiàa») che si sentono da lontano.</p>' +
     '<table><tr><th>Dove</th><td>Pareti e praterie sommitali del massiccio: nidifica in cavità e cenge delle rupi, si nutre a terra sulle praterie d’altura di insetti e larve, che cerca scavando con il becco. È nella checklist degli uccelli della Riserva insieme al gracchio alpino.</td></tr>' +
     '<tr><th>In gara</th><td>Fra la spalla del Velino e la cresta del Cafornia è facile vederne uno stormo alzarsi dai pascoli al passaggio dei primi concorrenti.</td></tr>' +
@@ -3676,7 +3686,7 @@ function buildGhiaione(){
   scene.add(grp);
 }
 function schedaGhiaione(sS){
-  openCard('<h2>Il ghiaione della Selletta</h2><h3>brecciai di altitudine · km 21,0 – 22,5</h3>' +
+  openCard(fotoHTML('ghiaione') + '<h2>Il ghiaione della Selletta</h2><h3>brecciai di altitudine · km 21,0 – 22,5</h3>' +
     '<p>Da qui parte la discesa che decide la gara: pietre mobili, grosse e spigolose, che il gelo stacca ogni inverno dalle creste e che scivolano verso valle. Non è terreno «morto»: è uno degli habitat più particolari della Riserva.</p>' +
     '<table><tr><th>Che cos’è</th><td>Il Piano di gestione distingue i <b>brecciai attivi</b> dei circhi glaciali (a nord di Sevice e Velino, a est e sud del Cafornia), colonizzati solo da poche piante pioniere a radice profonda come <i>Isatis allionii</i> e il panace d’Orsini, dai <b>brecciai consolidati</b> dove la festuca (<i>Festuca dimorpha</i>) riesce a fermare le pietre e a coprirne un terzo.</td></tr>' +
     '<tr><th>Habitat</th><td>«Ghiaioni calcarei montani e alpini» (codice 8120 della Direttiva Habitat), fra 1.600 e 2.300 m: una fascia che sul Velino copre quasi 4 km². Più in basso, in Valle Majelama, i ghiaioni termofili a ligustico (8130) esistono solo qui e sul Morrone.</td></tr>' +
@@ -3783,7 +3793,7 @@ async function buildCinghiali(loader){
 }
 function schedaCinghiale(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Cinghiale</h2><h3><i>Sus scrofa</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('cinghiale') + '<h2>Cinghiale</h2><h3><i>Sus scrofa</i> · km ' + km + '</h3>' +
     '<p>Il più diffuso dei grandi mammiferi della Riserva: un maschio adulto supera i 100 kg, con il grugno-aratro rivolta prati e sottobosco in cerca di radici, tuberi, ghiande e larve. Le «arature» che vedi ai bordi del sentiero sono sue.</p>' +
     '<table><tr><th>Dove</th><td>Diffuso in tutta la Riserva <b>fino a 2.000 m</b>: querceti e campi sopra Rosciolo, faggete, perfino le praterie del Rozza nelle notti d’estate. Di giorno riposa nel folto, in «lestre» scavate nel terreno.</td></tr>' +
     '<tr><th>Abitudini</th><td>Vive in gruppi di femmine con i piccoli (striati fino a sei mesi); i maschi adulti sono solitari. Attivo soprattutto al crepuscolo e di notte; si rotola nel fango per liberarsi dei parassiti.</td></tr>' +
@@ -3826,7 +3836,7 @@ async function buildCoturnici(loader){
 }
 function schedaCoturnice(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Coturnice</h2><h3><i>Alectoris graeca</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('coturnice') + '<h2>Coturnice</h2><h3><i>Alectoris graeca</i> · km ' + km + '</h3>' +
     '<p>La pernice delle montagne appenniniche: grossa come un piccione tozzo, dorso grigio-bruno, gola bianca bordata di nero e fianchi barrati di nero, bianco e castano; becco e zampe rosso corallo. Si alza in volo solo all’ultimo, con un frullo rumoroso, e preferisce scendere il pendio di corsa fra i sassi.</p>' +
     '<table><tr><th>Dove</th><td>Versanti aperti, assolati e sassosi fra i 1.000 e i 2.500 m, con erba rada e rocce affioranti: pascoli sopra Passo Le Forche, valloni laterali del Velino, creste del Cafornia. In inverno scende di quota sui pendii spazzati dal vento.</td></tr>' +
     '<tr><th>Abitudini</th><td>Vive in piccoli gruppi familiari (brigate) di 5–15 individui; nidifica a terra fra maggio e giugno. Il richiamo, un «ciò-ciò-ciò-ciock» ripetuto, si sente soprattutto all’alba.</td></tr>' +
@@ -3836,7 +3846,7 @@ function schedaCoturnice(sS){
 }
 function schedaAdonide(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Adonide ricurva</h2><h3><i>Adonis distorta</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('adonide') + '<h2>Adonide ricurva</h2><h3><i>Adonis distorta</i> · km ' + km + '</h3>' +
     '<p>Un piccolo cuscinetto di foglie finemente divise, alto una spanna, che a inizio estate si copre di fiori gialli larghi come una moneta. Non esiste in nessun altro luogo al mondo se non sulle montagne dell’Appennino centrale: è un <b>endemismo</b>, e il Velino ne ospita una delle popolazioni più importanti.</p>' +
     '<table><tr><th>Dove</th><td>Ghiaioni e pietraie calcaree sopra i 1.800 m, spesso in pieno sentiero: qui poco prima della Capanna di Sevice (una cinquantina di piante a bordo pista) e sulla cresta fra Velino e Cafornia (circa duecento).</td></tr>' +
     '<tr><th>Fioritura</th><td>Giugno–luglio, subito dopo lo scioglimento della neve; in ottobre resta il cuscinetto verde-grigio fra i sassi.</td></tr>' +
@@ -3847,7 +3857,7 @@ function schedaAdonide(sS){
 }
 function schedaGenziana(sS){
   const km = (sS / 1000).toFixed(1).replace('.', ',');
-  openCard('<h2>Genziana maggiore</h2><h3><i>Gentiana lutea</i> · km ' + km + '</h3>' +
+  openCard(fotoHTML('genziana') + '<h2>Genziana maggiore</h2><h3><i>Gentiana lutea</i> · km ' + km + '</h3>' +
     '<p>La grande genziana gialla dei pascoli d’altura: un fusto robusto alto fino a un metro e mezzo, foglie larghe e opposte con nervature marcate, fiori gialli a stella raccolti in verticilli lungo il fusto. Fiorisce fra giugno e agosto; in ottobre restano i fusti secchi con le capsule dei semi.</p>' +
     '<table><tr><th>Dove</th><td>Pascoli e praterie calcaree fra i 1.000 e i 2.200 m: qui sui prati sotto il Cafornia e verso la Sella di Sevice.</td></tr>' +
     '<tr><th>Radice</th><td>Grossa e amarissima, usata da secoli per liquori e digestivi: per questo la pianta è stata saccheggiata e oggi è <b>protetta</b>, la raccolta è vietata.</td></tr>' +
