@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'r1';
+const VER = 'r2';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -240,6 +240,7 @@ async function boot(){
   const world = await loadGLB(loader, 'assets/scene.glb?' + VER, p => prog(0.06 + 0.58 * p));
   prepWorld(world.scene);
   scene.add(world.scene);
+  if (DEM10) { try { riancora(world.scene, 'scene.glb'); } catch (e) { console.warn('riancora:', e); } }
   try { buildTrailHeights(); } catch (e) { console.warn('quote nastro:', e); }
   loadVeg(loader).catch(e => console.warn('vegetazione:', e));
   try {
@@ -264,7 +265,7 @@ async function boot(){
       let ly = groundAt(lx, lz);
       try {
         let terr = null;
-        scene.traverse(o => { if (!terr && o.isMesh && (o.name || '').startsWith('Terrain')) terr = o; });
+        if (!DEM10) scene.traverse(o => { if (!terr && o.isMesh && (o.name || '').startsWith('Terrain')) terr = o; });
         if (terr) {
           const rc = new THREE.Raycaster(new THREE.Vector3(lx, (ly > -1e3 ? ly : tmpA.y) + 80, lz),
                                          new THREE.Vector3(0, -1, 0), 0, 300);
@@ -294,7 +295,7 @@ async function boot(){
       let ly2 = groundAt(mx, mz);
       try {
         let terr2 = null;
-        scene.traverse(o => { if (!terr2 && o.isMesh && (o.name || '').startsWith('Terrain')) terr2 = o; });
+        if (!DEM10) scene.traverse(o => { if (!terr2 && o.isMesh && (o.name || '').startsWith('Terrain')) terr2 = o; });
         if (terr2) {
           const rc2 = new THREE.Raycaster(new THREE.Vector3(mx, (ly2 > -1e3 ? ly2 : tmpA.y) + 80, mz),
                                           new THREE.Vector3(0, -1, 0), 0, 300);
@@ -341,6 +342,7 @@ async function boot(){
       if (o.isMesh && o.material && o.material.isMeshStandardMaterial) o.material.metalness = 0;
       if (nomiC.includes(o.name)) o.visible = false;
     });
+    if (DEM10) { try { riancora(g.scene, 'extras.glb'); } catch (e) { console.warn('riancora extras:', e); } }
     scene.add(g.scene);
     // la rastrelliera dei bastoncini (montanti, traversa, bastoncini) era sospesa di 1,1 m: si posa tutta insieme
     try {
@@ -551,7 +553,8 @@ function prepWorld(g){
     o.receiveShadow = true;
     if (!nm.startsWith('Terrain') && !nm.startsWith('SRM_Trail')) o.castShadow = true;
     if (nm.startsWith('Terrain')) {
-      colorizeTerrain(o);
+      if (DEM10) { try { buildTerrenoReale(o); } catch (e) { console.warn('terreno reale:', e); colorizeTerrain(o); } }
+      else colorizeTerrain(o);
     } else if (nm.startsWith('SRM_Trail')) {
       colorizeTrail(o);
       o.renderOrder = 1;
@@ -670,7 +673,7 @@ function drappeggiaNastro(trail){
   let n = 0, dmax = 0;
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i).applyMatrix4(M);
-    if (Math.hypot(v.x - cx, v.z - cz) < 700) continue;          // in paese il suolo e' la piazza/asfalto
+    if (Math.hypot(v.x - cx, v.z - cz) < (DEM10 ? 450 : 700)) continue;   // in paese il suolo e' la piazza/asfalto
     // allargamento: spinge il vertice verso l'esterno, lontano dal vertice del lato opposto piu' vicino
     if (side) {
       const sd = side.getX(i);
@@ -745,13 +748,14 @@ function setArco(cx, cz){
 function campionaTrattoArco(){
   const bers = [];
   scene.traverse(o => { if (o.isMesh && (o.name === 'Terrain' || /^Piazza/.test(o.name || ''))) bers.push(o); });
-  if (!bers.length) return;
+  if (!bers.length && !DEM10) return;
   const n = Math.ceil(ARCO.L), ye = [];
   const prev = YEXT; YEXT = null;      // posAt(s<0) senza tabella: solo la retta
   for (let k = 0; k <= n; k++) {
     posAt(Math.min(S0_ARCO + k, 0), tmpA);
     const rc0 = new THREE.Raycaster(new THREE.Vector3(tmpA.x, 400, tmpA.z), new THREE.Vector3(0, -1, 0), 0, 900);
     const h0 = rc0.intersectObjects(bers, false)[0];
+    if (!h0 && DEM10) { const gq = groundAt(tmpA.x, tmpA.z); ye.push(gq > -1e3 ? gq + 0.05 : null); continue; }
     ye.push(h0 ? h0.point.y + 0.05 : null);
   }
   for (let k = 0; k <= n; k++) if (ye[k] === null) ye[k] = k > 0 ? ye[k - 1] : (prev ? prev[0] : route.z[0]);
@@ -1661,7 +1665,7 @@ function tintaTex(){
   _tintaTex.wrapS = _tintaTex.wrapT = THREE.ClampToEdgeWrapping;
   return _tintaTex;
 }
-function colorizeTerrain(mesh){
+function colorizeTerrain(mesh, soloAttributi){
   const g = mesh.geometry;
   const pos = g.getAttribute('position');
   const nrm = g.getAttribute('normal');
@@ -1693,6 +1697,7 @@ function colorizeTerrain(mesh){
       uv[i * 2 + 1] = (-pos.getZ(i) - ORTHO.y0) / (ORTHO.y1 - ORTHO.y0);
     }
     g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    if (soloAttributi) return;
     const tex = new THREE.Texture(ORTHO.img);
     tex.needsUpdate = true;
     tex.colorSpace = THREE.SRGBColorSpace;
@@ -2071,9 +2076,11 @@ const SUNDIR = { x: 0.39, y: 0.545, z: 0.74 };
 const OC = [0, 0, 0];
 async function loadOrtho(){
   try {
-    const j = await (await fetch('assets/ortho.json?' + VER)).json();
+    let j = null;
+    try { j = await (await fetch('assets/orto10.json?' + VER)).json(); } catch (e) { j = null; }   // PCN 2012 (reality_explorer)
+    if (!j) j = await (await fetch('assets/ortho.json?' + VER)).json();
     const img = new Image();
-    img.src = 'assets/ortho.jpg?' + VER;
+    img.src = 'assets/' + j.file + '?' + VER;
     await new Promise((res, rej) => {
       const t = setTimeout(() => rej(new Error('timeout ortho.jpg')), 9000);
       const ok = () => { clearTimeout(t); res(); };
@@ -2100,6 +2107,13 @@ function orthoColor(xb, yb, out){
 }
 async function loadHeights(){
   try {
+    const j = await (await fetch('assets/dem10.json?' + VER)).json();
+    const b = await (await fetch('assets/' + j.file + '?' + VER)).arrayBuffer();
+    HG = Object.assign({}, j, { data: new Uint16Array(b) }); DEM10 = HG;
+    console.log('DEM 10 m:', j.nx + 'x' + j.ny, 'chunk', j.ncx + 'x' + j.ncy);
+    return;
+  } catch (e) { console.warn('dem10 assente, uso height.bin:', e.message); }
+  try {
     const j = await (await fetch('assets/height.json?' + VER)).json();
     const b = await (await fetch('assets/height.bin?' + VER)).arrayBuffer();
     HG = Object.assign({}, j, { data: new Uint16Array(b) });
@@ -2109,7 +2123,7 @@ async function loadHeights(){
 // -35: da li' le case "sospese"). Dopo l'avvio si confronta ogni cella con la mesh vera, a fette,
 // e si corregge dove lo scarto supera i 40 m.
 function correggiGriglia(){
-  if (!HG || !TIDX) return;
+  if (!HG || !TIDX || DEM10) return;
   let j = 0, n = 0;
   const passo = () => {
     const t0 = performance.now();
@@ -2133,7 +2147,8 @@ function groundAt(x, z){
   const v = (yb - HG.y0) / (HG.y1 - HG.y0) * (HG.ny - 1);
   if (u < 0 || v < 0 || u > HG.nx - 1.001 || v > HG.ny - 1.001) return groundExt(x, z);
   const i = Math.floor(u), j = Math.floor(v), fu = u - i, fv = v - j;
-  const gg = (jj, ii) => HG.data[Math.min(jj, HG.ny - 1) * HG.nx + Math.min(ii, HG.nx - 1)] * HG.scala;
+  const off = HG.off || 0;
+  const gg = (jj, ii) => HG.data[Math.min(jj, HG.ny - 1) * HG.nx + Math.min(ii, HG.nx - 1)] * HG.scala + off;
   return gg(j, i) * (1 - fu) * (1 - fv) + gg(j, i + 1) * fu * (1 - fv) +
          gg(j + 1, i) * (1 - fu) * fv + gg(j + 1, i + 1) * fu * fv;
 }
@@ -2295,6 +2310,164 @@ function aggiungiVetteEsterne(){
   }
 }
 
+// ---------- terreno reale (reality_explorer): DEM Tinitaly 10 m + ortofoto PCN a tasselli ----------
+// La mesh di Blender (lisciata da un DEM a ~30 m, scarto rms 15 m dal vero) resta solo come riferimento
+// per riappoggiare gli oggetti piazzati a mano (TIDX_BL); al suo posto una griglia di chunk da 1280 m
+// costruiti dalla griglia dem10 (gia' fusa con la mesh di Blender attorno alla piazza di Magliano), con
+// 4 livelli di dettaglio (10/20/40/80 m) scelti dalla distanza della camera, gonnelle ai bordi contro le
+// fessure fra livelli diversi, e un tassello di ortofoto a 1,25 m/px caricato quando ci si avvicina.
+let CHUNKS = [], CHUNK_GRP = null, chunkT = 0, chunkLoading = false, TEX_BASE = null, TINTA_BASE = null;
+const CHUNK_PASSI = [1, 2, 4, 8];
+function buildTerrenoReale(terrainBlender){
+  const G = DEM10;
+  // indice della mesh di Blender per riancorare gli oggetti, poi la mesh esce di scena
+  try { TIDX_BL = buildTerrIndex(terrainBlender, 60); } catch (e) { console.warn('indice Blender:', e); }
+  terrainBlender.visible = false; terrainBlender.userData.rimuovi = true;
+  // texture di base (tutta l'area, 4096) e tinta per la roccia: dall'ortofoto gia' caricata
+  TEX_BASE = new THREE.Texture(ORTHO.img); TEX_BASE.needsUpdate = true;
+  TEX_BASE.colorSpace = THREE.SRGBColorSpace; TEX_BASE.anisotropy = 8; TEX_BASE.wrapS = TEX_BASE.wrapT = THREE.ClampToEdgeWrapping;
+  TINTA_BASE = tintaTex();
+  CHUNK_GRP = new THREE.Group(); CHUNK_GRP.name = 'TerrenoReale';
+  CHUNKS = [];
+  for (let J = 0; J < G.ncy; J++) for (let I = 0; I < G.ncx; I++) {
+    const i0 = I * G.chunk, j0 = J * G.chunk;
+    const ni = Math.min(G.chunk, G.nx - 1 - i0), nj = Math.min(G.chunk, G.ny - 1 - j0);
+    if (ni <= 0 || nj <= 0) continue;
+    const mat = new THREE.MeshStandardMaterial({ map: TEX_BASE, vertexColors: true, roughness: 1, metalness: 0 });
+    const uUvA = { value: new THREE.Vector4(1, 1, 0, 0) };
+    mat.onBeforeCompile = sh => {
+      TERR_SH = sh; compilaTerreno(sh, TINTA_BASE);
+      sh.uniforms.uUvA = uUvA;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform vec4 uUvA;')
+        .replace('#include <uv_vertex>', '#include <uv_vertex>\n#ifdef USE_MAP\nvMapUv = (vMapUv - uUvA.zw) * uUvA.xy;\n#endif');
+    };
+    mat.customProgramCacheKey = () => 'terreno-reale';
+    const c = { I, J, i0, j0, ni, nj, mat, uUvA, lod: -1, geo: [null, null, null, null], mesh: null, tex: 0,
+                cx: G.x0 + (i0 + ni / 2) * G.passo, cz: -(G.y0 + (j0 + nj / 2) * G.passo), semi: Math.max(ni, nj) * G.passo / 2 };
+    const m = new THREE.Mesh(geoChunk(c, 3), mat);
+    m.name = 'Suolo_' + I + '_' + J; m.receiveShadow = true; m.castShadow = false; m.frustumCulled = true;
+    c.mesh = m; c.lod = 3;
+    CHUNK_GRP.add(m); CHUNKS.push(c);
+  }
+  scene.add(CHUNK_GRP);
+  // livello iniziale secondo la posizione di partenza (la camera non c'e' ancora): il primo tick rifinisce
+  aggiornaChunk(route.x[0], -route.y[0], true);
+  console.log('terreno reale:', CHUNKS.length, 'chunk');
+}
+// geometria di un chunk al livello l (passo di griglia 10 m x CHUNK_PASSI[l]), con gonnella
+function geoChunk(c, l){
+  if (c.geo[l]) return c.geo[l];
+  const G = DEM10, k = CHUNK_PASSI[l], off = G.off || 0, sc = G.scala;
+  const nu = Math.ceil(c.ni / k), nv = Math.ceil(c.nj / k);          // quad per lato
+  const W = nu + 1, Hh = nv + 1, nV = W * Hh, nS = 2 * (W + Hh);     // vertici griglia + gonnella
+  const pos = new Float32Array((nV + nS) * 3), nrm = new Float32Array((nV + nS) * 3);
+  const q = (i, j) => G.data[Math.min(G.ny - 1, Math.max(0, j)) * G.nx + Math.min(G.nx - 1, Math.max(0, i))] * sc + off;
+  const d2 = 2 * k * G.passo;
+  let p = 0;
+  for (let v = 0; v < Hh; v++) for (let u = 0; u < W; u++) {
+    const i = Math.min(G.nx - 1, c.i0 + u * k), j = Math.min(G.ny - 1, c.j0 + v * k);
+    pos[p * 3] = G.x0 + i * G.passo; pos[p * 3 + 1] = q(i, j); pos[p * 3 + 2] = -(G.y0 + j * G.passo);
+    // normale dalle differenze centrali della griglia al passo del livello (x est, z = -nord)
+    const dx = (q(i + k, j) - q(i - k, j)) / d2, dy = (q(i, j + k) - q(i, j - k)) / d2;
+    const L = Math.hypot(dx, 1, dy);
+    nrm[p * 3] = -dx / L; nrm[p * 3 + 1] = 1 / L; nrm[p * 3 + 2] = dy / L;
+    p++;
+  }
+  const idx = [];
+  for (let v = 0; v < nv; v++) for (let u = 0; u < nu; u++) {
+    const a = v * W + u, b = a + 1, cc = a + W, d = cc + 1;
+    // diagonale lungo la pendenza minore: meno sfaccettature sulle creste
+    if (Math.abs(pos[a * 3 + 1] - pos[d * 3 + 1]) < Math.abs(pos[b * 3 + 1] - pos[cc * 3 + 1])) idx.push(a, d, cc, a, b, d);
+    else idx.push(a, b, cc, b, d, cc);
+  }
+  // gonnella: copia dei vertici di bordo abbassata, stessa normale (niente riga d'ombra)
+  const giu = 4 + 6 * k;
+  const bordo = [];
+  for (let u = 0; u < W; u++) bordo.push(u);                        // lato sud (v = 0)
+  for (let v = 0; v < Hh; v++) bordo.push(v * W + W - 1);           // est
+  for (let u = W - 1; u >= 0; u--) bordo.push((Hh - 1) * W + u);    // nord
+  for (let v = Hh - 1; v >= 0; v--) bordo.push(v * W);              // ovest
+  for (let s = 0; s < bordo.length; s++) {
+    const b = bordo[s], t = nV + s;
+    pos[t * 3] = pos[b * 3]; pos[t * 3 + 1] = pos[b * 3 + 1] - giu; pos[t * 3 + 2] = pos[b * 3 + 2];
+    nrm[t * 3] = nrm[b * 3]; nrm[t * 3 + 1] = nrm[b * 3 + 1]; nrm[t * 3 + 2] = nrm[b * 3 + 2];
+    const s2 = (s + 1) % bordo.length, b2 = bordo[s2], t2 = nV + s2;
+    if (b2 === b) continue;
+    idx.push(b, t, b2, b2, t, t2, b, b2, t, b2, t2, t);    // doppia faccia: visibile da entrambi i lati
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  g.setIndex(idx);
+  colorizeTerrain({ geometry: g }, true);          // colore per quota/pendenza + uv sull'ortofoto di base
+  g.computeBoundingSphere(); g.computeBoundingBox();
+  c.geo[l] = g;
+  return g;
+}
+// raggi (m) dei livelli e dei tasselli di ortofoto, secondo qualita' e dispositivo
+function raggiChunk(){
+  const alto = FLY.on || st.view === 'top';
+  const l = QUAL.liv;
+  let R;
+  if (QUAL.mob) R = l >= 2 ? [1100, 2400, 4800] : l === 1 ? [800, 1800, 3600] : [0, 1200, 2600];
+  else R = l >= 3 ? [1900, 3800, 7000] : l === 2 ? [1600, 3200, 6000] : l === 1 ? [1100, 2400, 4800] : [0, 1500, 3200];
+  if (alto) R = [0, R[1], R[2]];                    // dall'alto il passo di 10 m non si distingue
+  const RT = QUAL.liv === 0 ? 0 : (QUAL.mob ? 1700 : 3000);
+  return { R, RT };
+}
+function aggiornaChunk(px, pz, subito){
+  const { R, RT } = raggiChunk();
+  let cambi = 0, best = null, bd = 1e12;
+  for (const c of CHUNKS) {
+    const d = Math.max(0, Math.hypot(px - c.cx, pz - c.cz) - c.semi);
+    const l = d < R[0] ? 0 : d < R[1] ? 1 : d < R[2] ? 2 : 3;
+    if (l !== c.lod && (subito || cambi < 2)) {     // al massimo due ricostruzioni per tick
+      c.mesh.geometry = geoChunk(c, l); c.lod = l; cambi++;
+    }
+    // le geometrie fini lontane si lasciano andare (memoria)
+    if (d > R[0] * 1.8 + 500 && c.geo[0] && c.lod !== 0) { c.geo[0].dispose(); c.geo[0] = null; }
+    if (d > R[1] * 1.8 + 500 && c.geo[1] && c.lod !== 1) { c.geo[1].dispose(); c.geo[1] = null; }
+    // tasselli di ortofoto: il piu' vicino non ancora caricato; quelli lontani tornano alla base
+    if (c.tex === 2 && d > RT * 2 + 1000) { c.mat.map.dispose(); c.mat.map = TEX_BASE; c.uUvA.value.set(1, 1, 0, 0); c.tex = 0; }
+    if (!c.tex && d < RT && d < bd) { bd = d; best = c; }
+  }
+  if (best && !chunkLoading) {
+    best.tex = 1; chunkLoading = true;
+    const G = DEM10;
+    EXT_TEX_LOADER.load('assets/orto/t_' + best.I + '_' + best.J + '.jpg?' + VER, tx => {
+      tx.colorSpace = THREE.SRGBColorSpace; tx.anisotropy = 8; tx.wrapS = tx.wrapT = THREE.ClampToEdgeWrapping;
+      best.mat.map = tx;
+      // il tassello copre [i0, i0+chunk] celle: scala e offset sulle uv globali (0..1 sull'intera griglia)
+      const sx = (G.nx - 1) / G.chunk, sy = (G.ny - 1) / G.chunk;
+      best.uUvA.value.set(sx, sy, best.I / sx, best.J / sy);
+      best.tex = 2; chunkLoading = false;
+    }, undefined, () => { best.tex = 3; chunkLoading = false; });
+  }
+}
+function tickTerrenoReale(dt){
+  if (!CHUNKS.length) return;
+  chunkT += dt; if (chunkT < 0.35) return; chunkT = 0;
+  aggiornaChunk(camera.position.x, camera.position.z, false);
+}
+// gli oggetti piazzati a mano in Blender (fontana, chiesa di Porclaneta, rifugio Sevice, ristoro...) stavano
+// sulla mesh vecchia: si spostano in verticale dello scarto fra terreno nuovo e vecchio sotto la loro origine
+function riancora(root, nome){
+  if (!DEM10 || !TIDX_BL || !root) return;
+  let n = 0, dmax = 0;
+  for (const o of root.children) {
+    const nm = o.name || '';
+    if (/^(Terrain|SRM_Trail|Clouds|Piazza|Forest|Arch_|ArchTxt|Comune_Meshy|Grif_Meshy)/.test(nm)) continue;
+    const x = o.position.x, z = o.position.z;
+    const vec = altezzaIdx(TIDX_BL, x, z), nuo = groundAt(x, z);
+    if (vec < -1e3 || nuo < -1e3) continue;
+    const d = nuo - vec;
+    if (Math.abs(d) > 80) continue;
+    o.position.y += d; n++; dmax = Math.max(dmax, Math.abs(d));
+  }
+  if (n) console.log('riancorati', n, 'oggetti di', nome, 'scarto max', dmax.toFixed(1), 'm');
+}
+
 // REGOLA FISSA: ogni oggetto appoggiato al suolo passa da poggia() —
 // il punto piu' basso del bounding box tocca terra (+3 cm), mai annegato ne' volante.
 // inclina un oggetto appoggiato secondo la pendenza del terreno vero attorno alla sua posizione (passo h)
@@ -2313,7 +2486,7 @@ function poggia(obj, margine = 0.03){
   let gy = groundAt(cx, cz);
   try {
     let terr = null;
-    scene.traverse(o => { if (!terr && o.isMesh && (o.name || '').startsWith('Terrain')) terr = o; });
+    if (!DEM10) scene.traverse(o => { if (!terr && o.isMesh && (o.name || '').startsWith('Terrain')) terr = o; });
     if (terr) {
       const rc = new THREE.Raycaster(new THREE.Vector3(cx, box.max.y + 120, cz),
                                      new THREE.Vector3(0, -1, 0), 0, 600);
@@ -5391,7 +5564,7 @@ function tickTerra(dt){
 // certi punti sta sotto la mesh, e il grifone finiva "sotto terra"
 // Indice spaziale dei triangoli della mesh del terreno (celle di 60 m in pianta):
 // il raycast di three su 360k triangoli costa ~100 ms, questo ~0,02 ms.
-let TERR = null, TIDX = null;
+let TERR = null, TIDX = null, DEM10 = null, TIDX_BL = null;
 function buildTerrIndex(mesh, cell){
   if (!mesh) scene.traverse(o => { if (!TERR && o.isMesh && (o.name || '').startsWith('Terrain')) TERR = o; });
   const M = mesh || TERR;
@@ -5443,6 +5616,7 @@ function altezzaIdx(T, x, z){
 }
 function terraVera(x, z, yHint){
   const gg = groundAt(x, z);
+  if (DEM10) return gg;
   if (!TIDX) { try { TIDX = buildTerrIndex(); } catch (e) { console.warn('indice terreno:', e); } if (!TIDX) return gg; }
   const T = TIDX;
   const cx = Math.floor((x - T.x0) / T.C), cz = Math.floor((z - T.z0) / T.C);
@@ -5667,7 +5841,7 @@ function tick(){
       m.position.set(g.c[0] + g.r * Math.cos(ph), g.c[2] + Math.sin(tNow0 * 0.6 + g.ph0) * 4, -(g.c[1] + g.r * Math.sin(ph)));
       m.rotation.y = ph + Math.PI / 2 + Math.PI;
     }
-    tickPeaks(dt); tickSentieri(dt); tickExtTiles(dt);
+    tickPeaks(dt); tickSentieri(dt); tickExtTiles(dt); tickTerrenoReale(dt);
     renderer.render(scene, camera);
     guardiaFps(dtReale);
     return;
@@ -5755,7 +5929,7 @@ function tick(){
     m.position.set(g.c[0] + g.r * Math.cos(ph), g.c[2] + Math.sin(tNow * 0.6 + g.ph0) * 4, -(g.c[1] + g.r * Math.sin(ph)));
     m.rotation.y = ph + Math.PI / 2 + Math.PI;
   }
-  tickPeaks(dt); tickSentieri(dt); tickExtTiles(dt);
+  tickPeaks(dt); tickSentieri(dt); tickExtTiles(dt); tickTerrenoReale(dt);
   updateHUD();
   renderer.render(scene, camera);
   guardiaFps(dtReale);
