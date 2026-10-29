@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'r2';
+const VER = 'r3';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -3099,7 +3099,23 @@ async function loadVeg(loader){
   };
   const CIL = { Cylinder_026: ['Cone', 'Cone_001', 'Cone_002'], Cylinder_027: ['Cone_003', 'Cone_004', 'Cone_005'], Cylinder_028: ['Cone_006', 'Cone_007', 'Cone_008'] };
   const tieni = {}, latif = { quercia: [], faggio: [] }, conta = { pino: 0, quercia: 0, faggio: 0, tolti: 0 };
-  for (const cil of Object.keys(CIL)) {
+  // reality_explorer: alberi dall'ortofoto (assets/alberi.bin, chiome lette dalla foto + boschi OSM, specie per
+  // quota/settore): entro 500 m dal percorso piante 3D, oltre sprite incrociati. Sostituiscono i coni di Blender.
+  const ALB = await caricaAlberi();
+  const SPRITE = { quercia: [], faggio: [], pino: [] };
+  if (ALB) {
+    const pini = [];
+    for (const t of ALB) {
+      const nome = ['quercia', 'faggio', 'pino'][t.tipo] || 'quercia';
+      if (t.sprite) { SPRITE[nome].push(t); continue; }
+      if (nome === 'pino') { let h = terraVera(t.x, -t.y, 0); if (h < -1e3) h = groundAt(t.x, -t.y); pini.push([t.x, t.y, h, t.rot, 0.7 + 0.45 * t.sc]); conta.pino++; }
+      else { latif[nome].push([t.x, t.y, 0, t.rot, t.sc]); conta[nome]++; }
+    }
+    veg.inst.Cylinder_026 = veg.inst.Cone = veg.inst.Cone_001 = veg.inst.Cone_002 = pini;
+    for (const k of ['Cylinder_027', 'Cone_003', 'Cone_004', 'Cone_005', 'Cylinder_028', 'Cone_006', 'Cone_007', 'Cone_008']) veg.inst[k] = [];
+    console.log('alberi dall\'ortofoto:', ALB.length, 'di cui sprite', SPRITE.quercia.length + SPRITE.faggio.length + SPRITE.pino.length);
+  }
+  for (const cil of (ALB ? [] : Object.keys(CIL))) {
     const arr = veg.inst[cil] || []; const mask = new Uint8Array(arr.length);
     for (let i = 0; i < arr.length; i++) {
       const t = arr[i], tipo = tipoAlbero(t);
@@ -3201,9 +3217,91 @@ async function loadVeg(loader){
     return [x, y - 0.05, z, t[3], (tipo === 'quercia' ? 0.55 : 0.70) * (0.8 + 0.5 * (t[4] || 1)), 0];
   });
   const OCRA = new THREE.Color(1.08, 0.82, 0.46);
-  const tintaQuercia = (c, r, rnd) => { c.setHSL(0, 0, 0.85 + r * 0.3); if (rnd() < 0.4) c.multiply(OCRA); };   // due piante su cinque gia' virate all'ocra
+  const tintaQuercia = (c, r, rnd) => { c.setHSL(0, 0, 0.56 + r * 0.3); if (rnd() < 0.3) c.multiply(OCRA); };   // due piante su cinque gia' virate all'ocra
   if (latif.quercia.length) { const im = buildPiantaLowPoly({ nome: 'Querce', geo: geoQuercia(31), seme: 3101, vento: 0.9, hVento: 7, posti: posti('quercia'), tinta: tintaQuercia, scheda: schedaRoverella }); VEG_IM.push({ im, n: im.count }); }
   if (latif.faggio.length) { const im = buildPiantaLowPoly({ nome: 'Faggi', geo: geoFaggio(41), seme: 4101, vento: 1.1, hVento: 10, posti: posti('faggio'), scheda: schedaBoscaglia }); VEG_IM.push({ im, n: im.count }); }
+  // sprite lontani (quattro triangoli a pianta): stesse proporzioni e tinte delle piante 3D
+  if (SPRITE.quercia.length) buildAlberiSprite('SpriteQuerce', SPRITE.quercia, { h: 7.0 * 0.55 * K, asp: 0.95, hue: 0.165, sat: 0.46, lum: 0.31, ocra: 0.4, tronco: 0.22 });
+  if (SPRITE.faggio.length) buildAlberiSprite('SpriteFaggi', SPRITE.faggio, { h: 11.7 * 0.70 * K, asp: 0.5, hue: 0.075, sat: 0.72, lum: 0.40, ocra: 0, tronco: 0.3 });
+  if (SPRITE.pino.length) buildAlberiSprite('SpritePini', SPRITE.pino, { h: 15.5, asp: 0.9, hue: 0.33, sat: 0.35, lum: 0.22, ocra: 0, tronco: 0.18, conico: true });
+}
+async function caricaAlberi(){
+  try {
+    const j = await (await fetch('assets/alberi.json?' + VER)).json();
+    const dv = new DataView(await (await fetch('assets/' + j.file + '?' + VER)).arrayBuffer());
+    const out = [];
+    for (let i = 0; i < j.n; i++) {
+      const o = i * 7, b = dv.getUint8(o + 4);
+      out.push({ x: dv.getInt16(o, true), y: dv.getInt16(o + 2, true), tipo: b & 7, sprite: !!(b & 8), sc: dv.getUint8(o + 5) / 100, rot: dv.getUint8(o + 6) / 40.5 });
+    }
+    return out;
+  } catch (e) { console.warn('alberi.bin assente:', e.message); return null; }
+}
+// chioma dipinta su canvas: trama di dischi sovrapposti (chiara in alto), tronco sotto
+function texAlbero(cfg, seme){
+  const rnd = rngDa(seme), S = 256, cv = document.createElement('canvas'); cv.width = cv.height = S;
+  const c = cv.getContext('2d'); c.clearRect(0, 0, S, S);
+  const hT = S * cfg.tronco, w0 = S * 0.04;
+  c.fillStyle = 'hsl(25,20%,26%)'; c.fillRect(S / 2 - w0, S - hT - 4, w0 * 2, hT + 4);
+  const n = cfg.conico ? 0 : 42;
+  for (let i = 0; i < n; i++) {
+    const u = rnd(), v = Math.pow(rnd(), 0.8);
+    const cx = S * (0.5 + (u - 0.5) * 0.8 * Math.sqrt(1 - Math.pow(v * 2 - 1, 2) * 0.6)), cy = S * (0.06 + v * (0.94 - cfg.tronco - 0.02));
+    const r = S * (0.09 + rnd() * 0.09);
+    const l = cfg.lum + (0.5 - v) * 0.12 + (rnd() - 0.5) * 0.06;
+    c.fillStyle = 'hsl(' + (cfg.hue * 360 + (rnd() - 0.5) * 12) + ',' + (cfg.sat * 100) + '%,' + (l * 100) + '%)';
+    c.beginPath(); c.arc(cx, cy, r, 0, 6.3); c.fill();
+  }
+  if (cfg.conico) {
+    // pino: tre palchi triangolari sovrapposti, sempre piu' stretti verso la cima
+    for (let k = 0; k < 4; k++) {
+      const y1 = S * (0.98 - cfg.tronco) - k * S * 0.17, y0 = y1 - S * 0.30, w = S * (0.46 - k * 0.1);
+      c.fillStyle = 'hsl(' + (cfg.hue * 360) + ',' + (cfg.sat * 100) + '%,' + ((cfg.lum + k * 0.02) * 100) + '%)';
+      c.beginPath(); c.moveTo(S / 2, y0); c.lineTo(S / 2 + w, y1); c.lineTo(S / 2 - w, y1); c.closePath(); c.fill();
+    }
+  }
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+function buildAlberiSprite(nome, lista, cfg){
+  const H = cfg.h, W = H * cfg.asp;
+  const pos = [], uv = [], nrm = [], idx = [];
+  const quad = (ax, az) => {
+    const b = pos.length / 3;
+    pos.push(-ax * W / 2, 0, -az * W / 2, ax * W / 2, 0, az * W / 2, ax * W / 2, H, az * W / 2, -ax * W / 2, H, -az * W / 2);
+    uv.push(0, 0, 1, 0, 1, 1, 0, 1); for (let k = 0; k < 4; k++) nrm.push(0, 1, 0);   // normali in su: luce uniforme come il suolo
+    idx.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  };
+  quad(1, 0); quad(0, 1);
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3)); g.setIndex(idx);
+  const m = new THREE.MeshStandardMaterial({ map: texAlbero(cfg, 777 + nome.length), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.95, metalness: 0 });
+  m.onBeforeCompile = sh => {
+    sh.uniforms.uT = { value: 0 }; VENTO_SH.push(sh);
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uT;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+{ vec4 wp = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0); float h = clamp(position.y / ${H.toFixed(2)}, 0.0, 1.0);
+  transformed.x += sin(uT * 1.7 + wp.x * 0.05 + wp.z * 0.037) * 0.5 * h * h; transformed.z += sin(uT * 1.3 + wp.z * 0.04) * 0.3 * h * h; }`);
+    // normale sempre verso l'alto, da qualunque lato si guardi (niente facce nere)
+    sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\nnormal = normalize((viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz); nonPerturbedNormal = normal;');
+  };
+  m.customProgramCacheKey = () => 'sprite-' + nome;
+  const im = new THREE.InstancedMesh(g, m, lista.length);
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), E = new THREE.Euler(), S = new THREE.Vector3(), P = new THREE.Vector3(), col = new THREE.Color();
+  const rnd = rngDa(4242 + nome.length), OCRA = new THREE.Color(1.08, 0.82, 0.46);
+  lista.forEach((t, i) => {
+    const z = -t.y; let y = terraVera(t.x, z, 0); if (y < -1e3) y = groundAt(t.x, z);
+    P.set(t.x, y - 0.3, z); Q.setFromEuler(E.set(0, t.rot, 0)); S.setScalar(t.sc);
+    M.compose(P, Q, S); im.setMatrixAt(i, M);
+    col.setHSL(0, 0, 0.64 + rnd() * 0.3); if (rnd() < cfg.ocra) col.multiply(OCRA);
+    im.setColorAt(i, col);
+  });
+  im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true;
+  im.castShadow = false; im.receiveShadow = false; im.frustumCulled = false; im.name = nome;
+  scene.add(im);
+  VEG_IM.push({ im, n: lista.length });
+  return im;
 }
 
 // ---------- animali riggati (Meshy, animati per ossa): lupo ai pratoni e cervo in Valle Porclaneta ----------
