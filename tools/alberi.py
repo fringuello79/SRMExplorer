@@ -3,7 +3,10 @@ from scipy.ndimage import gaussian_filter, maximum_filter, binary_dilation
 from scipy.spatial import cKDTree
 X0,Y0=-6981.0,-7973.0; W,H=5120,5632; P=2.5
 mos=np.load('mos25.npy').astype(np.float32); R,G,B=mos[...,0],mos[...,1],mos[...,2]; L=0.299*R+0.587*G+0.114*B
-m=np.load('maschere.npz'); wood=m['wood']; scrub=m['scrub']; build=binary_dilation(m['build'], iterations=2)
+m=np.load('maschere.npz'); wood=m['wood']; scrub=m['scrub']
+build=binary_dilation(m['build'], iterations=10)       # case, strade e aree residenziali con 25 m di margine
+# il centro di Magliano fatto a mano (tigli compresi): niente alberi entro 450 m dalla piazza
+yy,xx=np.mgrid[0:H,0:W]; build|=np.hypot(X0+(xx+0.5)*P+1515.5, Y0+(H-yy-0.5)*P+4868)<450
 # quota e pendenza dalla griglia dem10 (10 m, riga 0 = sud) ricampionata a 2,5 m
 dj=json.load(open('/home/claude/srm/assets/dem10.json')); dem=np.fromfile('/home/claude/srm/assets/dem10.bin',dtype='<u2').reshape(dj['ny'],dj['nx'])*dj['scala']+dj['off']
 A,Bq=0.8948,726.2

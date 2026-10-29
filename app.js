@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'r3';
+const VER = 'r3b';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -1987,7 +1987,8 @@ function applicaQualita(l){
     ombraHalf = -1; inquadraOmbre(430);
   }
   const fr = [0.55, 0.8, 1, 1][l] * ((FLY.on || st.view === 'top') && QUAL.mob ? 0.8 : 1);
-  for (const v of VEG_IM) v.im.count = Math.max(1, Math.round(v.n * fr));
+  // dall'alto (vista 4) le piante 3D sono puntini: restano solo gli sprite (quattro triangoli l'uno)
+  { const topV = st.view === 'top' && !FLY.on; for (const v of VEG_IM) { v.im.count = Math.max(1, Math.round(v.n * fr)); v.im.visible = !topV || /^Sprite/.test(v.im.name || ''); } }
   for (let i = 0; i < NUVOLE.length; i++) NUVOLE[i].visible = l > 0 || i % 2 === 0;
   // la flora minuta (cuscini, adonidi, genziane, sassi) da quota di volo non si distingue: fuori dalla scena
   { const vis = !(FLY.on || st.view === 'top'); for (const im of IMPOSTORS) if (im.userData.piccola) { im.visible = vis; if (im.userData.rocce) im.userData.rocce.visible = vis; } }
