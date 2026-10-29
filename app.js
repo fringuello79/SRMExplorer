@@ -7,7 +7,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 
-const VER = 'v90b';
+const VER = 'r1';
 
 // ---------- nebbia "d'altura": densa nelle valli, aria pulita in cresta ----------
 // Si sostituiscono i chunk della nebbia di three prima che qualunque materiale compili:
@@ -386,6 +386,9 @@ async function boot(){
       if (tolti) console.log('borghi: case sospese rimosse (vertici):', tolti);
     } catch (e) { console.warn('case sospese:', e); }
     try { arredaCase(g.scene); } catch (e) { console.warn('facciate borghi:', e); }
+    // reality_explorer: i blocchi piatti dei borghi lasciano il posto agli edifici OSM con i tetti a falde
+    // (buildEdificiOSM); resta la piazza e tutto cio' che non e' 'Borghi*'
+    g.scene.traverse(o => { if (o.isMesh && /^Borghi/.test(o.name || '')) o.visible = false; });
   }, undefined, () => console.warn('borghi assente'));
   // centro di Magliano curato a mano (magliano_centro.blend -> export_magliano.py)
   loader.load('assets/maglianoC.glb?' + VER, g => {
@@ -404,7 +407,8 @@ async function boot(){
     // tigli davanti al Comune (oggetti Tiglio* del blend di Ale): chioma con vento e tinta d'autunno
     g.scene.traverse(o => { if (o.isMesh && /^Tiglio/.test(o.name || '')) vestiTiglio(o); });
     try { buildTigli(); } catch (e) { console.warn('tigli:', e); }
-  }, undefined, () => console.warn('maglianoC assente'));
+    buildEdificiOSM(g.scene).catch(e => console.warn('edifici OSM:', e));
+  }, undefined, () => { console.warn('maglianoC assente'); buildEdificiOSM(null).catch(e => console.warn('edifici OSM:', e)); });
   $('load-step').textContent = 'Lino…';
   let lg;
   try { lg = await loadGLB(loader, 'assets/lino2.glb?' + VER, p => prog(0.66 + 0.28 * p)); LINO2 = true; }
@@ -512,7 +516,7 @@ function buildStage(){
   const hemi = new THREE.HemisphereLight(0xf2f7ff, 0x6d755b, 1.05);
   HEMI = hemi;
   sunLight = new THREE.DirectionalLight(0xfff3e0, 2.4);
-  sunLight.position.set(-1200, 1450, -1350);
+  sunLight.position.set(SUNDIR.x * 2300, SUNDIR.y * 2300, SUNDIR.z * 2300);
   const fill = new THREE.DirectionalLight(0xffe7c8, 0.32);
   fill.position.set(5600, 4000, 4800);
   scene.add(hemi, sunLight, sunLight.target, fill);
@@ -2060,7 +2064,10 @@ function avviaDiag(){
   d.style.cssText = 'position:fixed;right:8px;top:64px;z-index:99;margin:0;padding:6px 8px;background:rgba(0,0,0,.55);color:#9f9;font:11px/1.35 ui-monospace,Menlo,monospace;border-radius:6px;pointer-events:none;white-space:pre';
   document.body.appendChild(d); QUAL.diag = d;
 }
-const SUNDIR = { x: -0.52, y: 0.62, z: -0.58 };
+// Sole del 18 ottobre 2026 alle 10:30 su Magliano (lat 42,09): azimut ~152 gradi (sud-sud-est), altezza ~33 gradi.
+// Direzione VERSO il sole in coordinate di scena (x = est, z = -nord, y = su). Prima la luce veniva da
+// nord-ovest "come nel film": sbagliata fisicamente, e le creste esposte a sud restavano piatte.
+const SUNDIR = { x: 0.39, y: 0.545, z: 0.74 };
 const OC = [0, 0, 0];
 async function loadOrtho(){
   try {
@@ -2413,6 +2420,96 @@ function colorizeTrail(mesh){
 // il fragment shader dispone finestre e porte per piano e per campata, senza tagli agli spigoli,
 // e aggiunge zoccolo, intonaco variato per parete e tegole sulle falde. Zero triangoli in piu'.
 const CASE_SH = [];
+// ---------- edifici dei borghi dalle impronte OSM (assets/edifici.json, tools/build_edifici.py) ----------
+// Ogni impronta quasi rettangolare diventa un corpo con tetto a due falde (colmo lungo il lato lungo, gronda
+// sporgente 45 cm, fascia di gronda, comignolo); le altre si estrudono con un tetto a padiglione basso.
+// Le quote vengono dal terreno vero: base interrata sotto il punto piu' basso, gronda sopra il piu' alto.
+// Pareti e tetti finiscono in due sole mesh con i materiali 'TB_int0'/'TB_roof0', cosi' arredaCase le veste
+// come le case di Magliano (intonaci, finestre, tegole). Le impronte che cadono sulle case fatte a mano di
+// Magliano (maglianoC) si saltano.
+async function buildEdificiOSM(centro){
+  const r = await fetch('assets/edifici.json?' + VER); if (!r.ok) throw new Error('edifici.json ' + r.status);
+  const E = (await r.json()).e;
+  // case di Magliano gia' modellate: centri delle 'Casa*' di maglianoC
+  const manuali = [];
+  if (centro) centro.traverse(o => { if (o.isMesh && /^Casa/.test(o.name || '')) { const b = new THREE.Box3().setFromObject(o); manuali.push([(b.min.x + b.max.x) / 2, (b.min.z + b.max.z) / 2, Math.max(b.max.x - b.min.x, b.max.z - b.min.z)]); } });
+  const vicinoManuale = (x, z) => { for (const m of manuali) { if (Math.hypot(m[0] - x, m[1] - z) < m[2] * 0.6 + 6) return true; } return false; };
+  const W = [], Wn = [], R = [], Rn = [], camini = [];
+  let hs = 7; const rnd = () => (hs = (hs * 16807) % 2147483647) / 2147483647;
+  const tri = (A, N, a, b, c) => { A.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2]; let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const L = Math.hypot(nx, ny, nz) || 1; nx /= L; ny /= L; nz /= L; N.push(nx, ny, nz, nx, ny, nz, nx, ny, nz); };
+  const quad = (A, N, a, b, c, d) => { tri(A, N, a, b, c); tri(A, N, a, c, d); };
+  const suolo = (x, z) => { const y = terraVera(x, z, 0); return y > -1e3 ? y : groundAt(x, z); };
+  let n = 0, saltati = 0;
+  for (const e of E) {
+    if (Array.isArray(e)) {
+      const [cx, cz, ang, w, l, h, tipo] = e;
+      if (vicinoManuale(cx, cz)) { saltati++; continue; }
+      const dx = Math.cos(ang), dz = Math.sin(ang), px = -dz, pz = dx;     // lato lungo e lato corto
+      const corner = (u, v) => [cx + dx * u + px * v, 0, cz + dz * u + pz * v];
+      const c = [corner(-l / 2, -w / 2), corner(l / 2, -w / 2), corner(l / 2, w / 2), corner(-l / 2, w / 2)];
+      let ymin = 1e9, ymax = -1e9;
+      for (const q of c) { const y = suolo(q[0], q[2]); ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+      const yc = suolo(cx, cz); ymin = Math.min(ymin, yc); ymax = Math.max(ymax, yc);
+      if (ymax - ymin > 12) { saltati++; continue; }                     // impronta a cavallo di un salto del terreno: dato sbagliato
+      const base = ymin - 1.2, top = ymax + h;
+      const alza = (q, y) => [q[0], y, q[2]];
+      // pareti (verso l'esterno: ordine dei vertici in senso orario visto da fuori)
+      for (let i = 0; i < 4; i++) { const a = c[i], b = c[(i + 1) % 4]; quad(W, Wn, alza(a, base), alza(a, top), alza(b, top), alza(b, base)); }
+      const industria = tipo === 'industria', chiesa = tipo === 'chiesa';
+      const rise = industria ? Math.min(0.08 * w, 0.9) : Math.min(0.24 * w, chiesa ? 5 : 3.4);
+      const sp = industria ? 0.15 : 0.45;                                // sporgenza della gronda
+      // timpani (triangoli ai due lati corti, materiale parete)
+      const colmoA = [cx + dx * (-l / 2), top + rise, cz + dz * (-l / 2)], colmoB = [cx + dx * (l / 2), top + rise, cz + dz * (l / 2)];
+      tri(W, Wn, alza(c[0], top), colmoA, alza(c[3], top));
+      tri(W, Wn, alza(c[1], top), alza(c[2], top), colmoB);
+      // falde: dalla gronda sporgente al colmo (prolungato di sp anche sui timpani)
+      const gr = (u, v) => [cx + dx * u + px * v, top - sp * (rise / (w / 2)) , cz + dz * u + pz * v];
+      const g0 = gr(-l / 2 - sp, -w / 2 - sp), g1 = gr(l / 2 + sp, -w / 2 - sp), g2 = gr(l / 2 + sp, w / 2 + sp), g3 = gr(-l / 2 - sp, w / 2 + sp);
+      const kA = [cx + dx * (-l / 2 - sp), top + rise, cz + dz * (-l / 2 - sp)], kB = [cx + dx * (l / 2 + sp), top + rise, cz + dz * (l / 2 + sp)];
+      quad(R, Rn, g0, kA, kB, g1);
+      quad(R, Rn, g2, kB, kA, g3);
+      // fascia di gronda (spessore del tetto): striscia verticale di 22 cm sotto il bordo delle falde
+      const giu = q => [q[0], q[1] - 0.22, q[2]];
+      quad(R, Rn, giu(g0), giu(g1), g1, g0); quad(R, Rn, giu(g2), giu(g3), g3, g2);
+      quad(R, Rn, giu(g1), giu(g2), g2, g1); quad(R, Rn, giu(g3), giu(g0), g0, g3);
+      // comignolo vicino al colmo, su una falda
+      if (!industria && w * l > 55 && rnd() < 0.8) { const u = (rnd() - 0.5) * l * 0.6, v = (rnd() < 0.5 ? -1 : 1) * w * 0.12; camini.push([cx + dx * u + px * v, top + rise - rise * 0.24 - 0.3, cz + dz * u + pz * v, 0.8 + rnd() * 0.5, ang]); }
+      n++;
+    } else {
+      const P = e.p, h = e.h, tipo = e.t;
+      let cx = 0, cz = 0; for (const q of P) { cx += q[0]; cz += q[1]; } cx /= P.length; cz /= P.length;
+      if (vicinoManuale(cx, cz)) { saltati++; continue; }
+      let ymin = 1e9, ymax = -1e9;
+      for (const q of P) { const y = suolo(q[0], q[1]); ymin = Math.min(ymin, y); ymax = Math.max(ymax, y); }
+      if (ymax - ymin > 12) { saltati++; continue; }
+      const base = ymin - 1.2, top = ymax + h;
+      // verso: le pareti devono guardare fuori; con area firmata negativa si inverte l'ordine
+      let A2 = 0; for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; A2 += a[0] * b[1] - b[0] * a[1]; }
+      const Q = A2 > 0 ? P.slice().reverse() : P;
+      for (let i = 0; i < Q.length; i++) { const a = Q[i], b = Q[(i + 1) % Q.length]; quad(W, Wn, [a[0], base, a[1]], [a[0], top, a[1]], [b[0], top, b[1]], [b[0], base, b[1]]); }
+      // tetto a padiglione basso: anello dalla gronda a un poligono interno rialzato, poi il tappo
+      const rise = tipo === 'industria' ? 0.6 : Math.min(2.6, 0.22 * Math.sqrt(Math.abs(A2) / 2));
+      const inn = Q.map(q => [cx + (q[0] - cx) * 0.45, top + rise, cz + (q[1] - cz) * 0.45]);
+      const out = Q.map(q => [cx + (q[0] - cx) * (1 + 0.45 / Math.max(3, Math.hypot(q[0] - cx, q[1] - cz))), top - 0.05, cz + (q[1] - cz) * (1 + 0.45 / Math.max(3, Math.hypot(q[0] - cx, q[1] - cz)))]);
+      for (let i = 0; i < Q.length; i++) { const j = (i + 1) % Q.length; quad(R, Rn, out[i], inn[i], inn[j], out[j]); const gi = [out[i][0], out[i][1] - 0.22, out[i][2]], gj = [out[j][0], out[j][1] - 0.22, out[j][2]]; quad(R, Rn, gi, gj, out[j], out[i]); }
+      for (let i = 1; i < inn.length - 1; i++) tri(R, Rn, inn[0], inn[i], inn[i + 1]);
+      n++;
+    }
+  }
+  const mk = (A, N, nome, col) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(A, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(N, 3)); const m = new THREE.MeshStandardMaterial({ color: col, roughness: 0.95, metalness: 0 }); m.name = nome; const mesh = new THREE.Mesh(g, m); mesh.castShadow = true; mesh.receiveShadow = true; mesh.name = 'EdificiOSM_' + nome; return mesh; };
+  const grp = new THREE.Group(); grp.name = 'EdificiOSM';
+  grp.add(mk(W, Wn, 'TB_int0', 0xd9cdb6), mk(R, Rn, 'TB_roof0', 0xa5583c));
+  scene.add(grp);
+  try { arredaCase(grp); } catch (e) { console.warn('facciate edifici OSM:', e); }
+  if (camini.length) {
+    const geo = new THREE.BoxGeometry(0.55, 1.6, 0.55); geo.translate(0, 0.8, 0);
+    const im = new THREE.InstancedMesh(geo, new THREE.MeshStandardMaterial({ color: 0xb3a08a, roughness: 1, metalness: 0 }), camini.length);
+    const M = new THREE.Matrix4(), Qr = new THREE.Quaternion(), Ei = new THREE.Euler(), S = new THREE.Vector3(), Pp = new THREE.Vector3();
+    camini.forEach((c, i) => { Pp.set(c[0], c[1], c[2]); Qr.setFromEuler(Ei.set(0, c[4], 0)); S.set(c[3], c[3], c[3]); M.compose(Pp, Qr, S); im.setMatrixAt(i, M); });
+    im.instanceMatrix.needsUpdate = true; im.castShadow = true; im.name = 'EdificiOSM_camini'; grp.add(im);
+  }
+  console.log('edifici OSM:', n, 'costruiti,', saltati, 'saltati (Magliano a mano o terreno incoerente),', camini.length, 'comignoli');
+}
 function arredaCase(root){
   const isMuro = m => /^muro|^TB_int|intonaco/i.test(m.name || '');
   const isTetto = m => /^tetto|^TB_roof|roof/i.test(m.name || '');
